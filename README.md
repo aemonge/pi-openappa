@@ -26,34 +26,26 @@ pi install npm:pi-openappa        # once published
 pi install ./pi-openappa          # from a checkout
 ```
 
-## Protect a session
+## Protect sessions
 
-Protection is opt-in per session and fixed at launch, matching OpenAPPA's own
-Claude Code integration (`clappa`):
+Protection is opt-in, in one of two ways:
 
-```sh
-APPA_GATE=1 pi          # protected session
-pi                      # normal, unprotected session
-```
-
-A launcher alias keeps it comfortable:
-
-```sh
-alias pippa='APPA_GATE=1 pi'
-```
-
-While gated, a runtime that cannot answer blocks the call and the reason is
-returned to the model — **silence never means yes**. Sessions started without
-`APPA_GATE` are untouched: the extension never invokes the hook.
-
-### Auto-start
+- **Built-in (recommended):** run `/appa on` once. From then on every Pi
+  session is protected — no alias, no env, no launcher. `/appa off` disables.
+- **Per launch:** `APPA_GATE=1 pi` (the `clappa`-style launcher route),
+  e.g. `alias pippa='APPA_GATE=1 pi'` for occasional use.
 
 A gated session brings the runtime up on its own: `session_start` invokes
-`appa hook --ensure-runtime`, passing `--config "$APPA_CONFIG"` when set.
-With the default port this means `APPA_GATE=1 APPA_CONFIG=./appa.toml pi`
-is a fully protected session with zero manual server management. A custom
+`appa hook --ensure-runtime`, passing `--config "$APPA_CONFIG"` when set and
+otherwise letting APPA use its own default policy (`~/.config/appa/appa.toml`).
+Protected sessions therefore need zero manual server management. A custom
 `APPA_RUNTIME_URL` names a runtime that is *yours* to start — the hook
 refuses with exactly that reason instead of guessing.
+
+While gated, a runtime that cannot answer blocks the call and the reason is
+returned to the model — **silence never means yes**. If no policy exists the
+startup warning names the exact outs; `/appa off` always works, even with
+every tool call blocked. Ungated sessions never invoke the hook.
 
 ## Configuration
 
@@ -65,7 +57,10 @@ refuses with exactly that reason instead of guessing.
 | `APPA_HOOK_BIN` | `appa` | Hook binary to invoke |
 | `APPA_HOOK_TIMEOUT_MS` | `15000` | Kill the hook after this long; the call is then blocked |
 
-`/appa` reports protection state and runtime health.
+`/appa` reports protection, always-on state, and runtime health; `/appa on`
+and `/appa off` toggle always-on protection (marker:
+`~/.config/pi-openappa/always-on`), taking effect immediately including the
+current session.
 
 ## Event mapping
 
