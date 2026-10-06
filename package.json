@@ -17,7 +17,7 @@
   },
   "main": "./extensions/index.ts",
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test 'test/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
