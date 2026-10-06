@@ -1,0 +1,30 @@
+{
+  "name": "pi-openappa",
+  "version": "0.1.0",
+  "description": "Thin OpenAPPA guard extension for Pi: gates tool calls through the APPA runtime. No policy logic lives here.",
+  "keywords": [
+    "pi-package",
+    "openappa",
+    "appa",
+    "security",
+    "guardrails",
+    "policy"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "pi": {
+    "extensions": ["./extensions/index.ts"]
+  },
+  "main": "./extensions/index.ts",
+  "scripts": {
+    "test": "node --test test/",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.0.4",
+    "typescript": "^5.9.3"
+  }
+}
