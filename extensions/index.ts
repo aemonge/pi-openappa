@@ -21,7 +21,7 @@ import {
   toolResponseFrom,
 } from "../src/adapter.ts";
 import { invokeAppaHook } from "../src/hook-client.ts";
-import { captureGate, checkHealth, type GateState } from "../src/gate.ts";
+import { captureGate, checkHealth, isAlwaysOn, setAlwaysOn, type GateState } from "../src/gate.ts";
 
 interface TextPart {
   type: "text";
@@ -57,7 +57,7 @@ export default function (pi: ExtensionAPI): void {
     if (outcome.exitCode !== 0 && ctx.hasUI) {
       const remedy =
         appaConfig === undefined
-          ? " Set APPA_CONFIG to your appa.toml so the session can start it."
+          ? " Provide a policy (set APPA_CONFIG or write ~/.config/appa/appa.toml), or run /appa off."
           : "";
       ctx.ui.notify(
         `OpenAPPA gated but the runtime did not answer (${gate.runtimeUrl}): ` +
@@ -124,14 +124,33 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("appa", {
-    description: "Show OpenAPPA protection status and runtime health",
-    handler: async (_args, ctx) => {
+    description: "Show OpenAPPA status; `appa on|off` toggles always-on protection",
+    handler: async (args, ctx) => {
+      const arg = args.trim();
+      if (arg === "on" || arg === "off") {
+        setAlwaysOn(process.env, arg === "on");
+        gate = captureGate(process.env);
+        if (ctx.hasUI) {
+          ctx.ui.notify(
+            arg === "on"
+              ? "OpenAPPA always-on enabled: every future Pi session is protected."
+              : "OpenAPPA always-on disabled.",
+            "info",
+          );
+        }
+        return;
+      }
       const state = gate ?? captureGate(process.env);
       const lines: string[] = [];
       lines.push(
         state.gated
           ? `Protection: ON (session ${sessionId || "not started"})`
-          : "Protection: off — start Pi with APPA_GATE=1 to protect a session",
+          : "Protection: off — /appa on enables it for every session",
+      );
+      lines.push(
+        isAlwaysOn(process.env)
+          ? "Always-on: enabled (/appa off to disable)"
+          : "Always-on: off",
       );
       lines.push(`Runtime: ${state.runtimeUrl}`);
       const health = await checkHealth(state.runtimeUrl);

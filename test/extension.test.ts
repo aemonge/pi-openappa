@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, describe, it } from "node:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,7 +10,7 @@ const MOCK_BIN = join(here, "fixtures", "mock-appa.mjs");
 const SESSION = "22222222-2222-2222-2222-222222222222";
 
 /** Environment keys this suite mutates; restored after every test. */
-const KEYS = ["APPA_GATE", "APPA_HOOK_BIN", "MOCK_MODE", "MOCK_RECORD", "APPA_HOOK_TIMEOUT_MS", "APPA_CONFIG"];
+const KEYS = ["APPA_GATE", "APPA_HOOK_BIN", "MOCK_MODE", "MOCK_RECORD", "APPA_HOOK_TIMEOUT_MS", "APPA_CONFIG", "XDG_CONFIG_HOME"];
 const saved: Record<string, string | undefined> = {};
 for (const key of KEYS) saved[key] = process.env[key];
 
@@ -316,6 +316,60 @@ describe("auto-start on gated session start", () => {
     await startSession(harness);
     assert.deepEqual(recordedArgv(dir), []);
     assert.deepEqual(recordedLines(dir), []);
+  });
+});
+
+describe("always-on mode (marker file)", () => {
+  it("gates every session once the marker exists", async () => {
+    const dir = workDir();
+    withMock(dir, "allow");
+    delete process.env.APPA_GATE;
+    process.env.XDG_CONFIG_HOME = join(dir, "xdg");
+    mkdirSync(join(dir, "xdg", "pi-openappa"), { recursive: true });
+    writeFileSync(join(dir, "xdg", "pi-openappa", "always-on"), "");
+    const harness = await loadExtension();
+    await startSession(harness);
+    const call = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
+    assert.equal(call, undefined);
+    assert.ok(recordedArgv(dir).length > 0, "hook was invoked without APPA_GATE");
+  });
+
+  it("inert when the marker is absent", async () => {
+    const dir = workDir();
+    withMock(dir, "allow");
+    delete process.env.APPA_GATE;
+    process.env.XDG_CONFIG_HOME = join(dir, "xdg-clean");
+    const harness = await loadExtension();
+    await startSession(harness);
+    const call = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
+    assert.equal(call, undefined);
+    assert.deepEqual(recordedArgv(dir), []);
+  });
+});
+
+describe("/appa on|off", () => {
+  it("on creates the marker and gates immediately; off removes it", async () => {
+    const dir = workDir();
+    process.env.XDG_CONFIG_HOME = join(dir, "xdg");
+    delete process.env.APPA_GATE;
+    const harness = await loadExtension();
+    const command = harness.commands.get("appa");
+    assert.ok(command);
+    await command.handler("on", harness.ctx);
+    assert.ok(existsSync(join(dir, "xdg", "pi-openappa", "always-on")));
+    const gated = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
+    assert.equal(gated, undefined); // gated now: would invoke hook (mock unset -> inert record empty ok)
+    await command.handler("off", harness.ctx);
+    assert.ok(!existsSync(join(dir, "xdg", "pi-openappa", "always-on")));
+  });
+
+  it("status completes without a runtime", async () => {
+    const dir = workDir();
+    process.env.XDG_CONFIG_HOME = join(dir, "xdg2");
+    process.env.APPA_RUNTIME_URL = "http://127.0.0.1:8799";
+    const harness = await loadExtension();
+    await startSession(harness);
+    await harness.commands.get("appa")!.handler("status", harness.ctx);
   });
 });
 
