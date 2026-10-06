@@ -11,6 +11,13 @@
     "policy"
   ],
   "license": "MIT",
+  "author": "aemonge",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aemonge-dev/pi-openappa.git"
+  },
+  "homepage": "https://github.com/aemonge-dev/pi-openappa#readme",
+  "bugs": "https://github.com/aemonge-dev/pi-openappa/issues",
   "type": "module",
   "pi": {
     "extensions": ["./extensions/index.ts"]
