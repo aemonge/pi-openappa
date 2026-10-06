@@ -23,6 +23,10 @@ export interface HookOutcome {
 export interface InvokeOptions {
   /** Report a finished turn (non-blocking `--turn-end`). */
   turnEnd?: boolean;
+  /** Bring the runtime up before posting (SessionStart semantics). */
+  ensureRuntime?: boolean;
+  /** Config the started runtime serves; requires ensureRuntime. */
+  config?: string;
   /** Override for the `appa` binary; defaults to APPA_HOOK_BIN or "appa". */
   bin?: string;
   /** Kill the hook after this many ms; defaults to APPA_HOOK_TIMEOUT_MS or 15000. */
@@ -46,7 +50,10 @@ export async function invokeAppaHook(
 ): Promise<HookOutcome> {
   const bin = options.bin ?? resolveHookBin(process.env);
   const timeoutMs = options.timeoutMs ?? resolveTimeoutMs(process.env);
-  const args = options.turnEnd === true ? ["hook", "--turn-end"] : ["hook"];
+  const args = ["hook"];
+  if (options.turnEnd === true) args.push("--turn-end");
+  if (options.ensureRuntime === true) args.push("--ensure-runtime");
+  if (options.config !== undefined) args.push("--config", options.config);
 
   return await new Promise<HookOutcome>((resolve) => {
     let child;

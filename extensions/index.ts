@@ -46,13 +46,22 @@ export default function (pi: ExtensionAPI): void {
     sessionId = ctx.sessionManager.getSessionId();
     if (!gated()) return;
 
+    const appaConfig = process.env.APPA_CONFIG;
     const outcome = await invokeAppaHook(
       sessionStartPayload(sessionId, event.reason, ctx.cwd),
+      {
+        ensureRuntime: true,
+        ...(appaConfig !== undefined ? { config: appaConfig } : {}),
+      },
     );
     if (outcome.exitCode !== 0 && ctx.hasUI) {
+      const remedy =
+        appaConfig === undefined
+          ? " Set APPA_CONFIG to your appa.toml so the session can start it."
+          : "";
       ctx.ui.notify(
         `OpenAPPA gated but the runtime did not answer (${gate.runtimeUrl}): ` +
-          `${outcome.stderr.trim() || `exit ${outcome.exitCode}`}. ` +
+          `${outcome.stderr.trim() || `exit ${outcome.exitCode}`}.${remedy} ` +
           "Tool calls will be blocked until it answers.",
         "warning",
       );

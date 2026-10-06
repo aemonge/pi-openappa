@@ -65,6 +65,15 @@ pi `session_start.reason`: `startup|new` → `startup`; `resume|fork|reload` →
 - `deliver_value` / remedy offers on PreToolUse
 - Subagent (`SubagentStop`, child trajectories) — out of v1 scope
 
+## Auto-start (verified 2026-10-06)
+
+- `appa hook --ensure-runtime --config <path>` with nothing on the default
+  port boots a runtime on `127.0.0.1:8787`; the hook exits 0.
+- `--ensure-runtime` with a custom `APPA_RUNTIME_URL` exits 2:
+  `the runtime could not be started: nothing answers <url>, and a runtime at
+  a URL the session named is the user's own to start` — custom URLs are
+  user-managed by design; nothing binds 8787 in that case.
+
 ## Test seam
 
 `appa replay <dir>` checks `.appa` trace files against a policy; mock-driven unit

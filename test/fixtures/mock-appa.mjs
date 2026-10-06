@@ -19,6 +19,10 @@ process.stdin.on("end", () => {
   }
   if (process.env.MOCK_RECORD) {
     appendFileSync(process.env.MOCK_RECORD, `${JSON.stringify(payload)}\n`);
+    appendFileSync(
+      `${process.env.MOCK_RECORD}.argv`,
+      `${JSON.stringify(process.argv.slice(2))}\n`,
+    );
   }
   const event = payload.hook_event_name;
   const mode = process.env.MOCK_MODE ?? "allow";

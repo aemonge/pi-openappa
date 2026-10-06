@@ -10,7 +10,7 @@ const MOCK_BIN = join(here, "fixtures", "mock-appa.mjs");
 const SESSION = "22222222-2222-2222-2222-222222222222";
 
 /** Environment keys this suite mutates; restored after every test. */
-const KEYS = ["APPA_GATE", "APPA_HOOK_BIN", "MOCK_MODE", "MOCK_RECORD", "APPA_HOOK_TIMEOUT_MS"];
+const KEYS = ["APPA_GATE", "APPA_HOOK_BIN", "MOCK_MODE", "MOCK_RECORD", "APPA_HOOK_TIMEOUT_MS", "APPA_CONFIG"];
 const saved: Record<string, string | undefined> = {};
 for (const key of KEYS) saved[key] = process.env[key];
 
@@ -270,6 +270,52 @@ describe("gated session through the scripted mock", () => {
     const stop = events.find((e) => e.hook_event_name === "Stop");
     assert.equal(prompt.prompt, "list the files");
     assert.ok(stop);
+  });
+});
+
+function recordedArgv(dir: string): string[][] {
+  const file = `${join(dir, "record.jsonl")}.argv`;
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as string[]);
+}
+
+describe("auto-start on gated session start", () => {
+  it("passes --ensure-runtime and --config from APPA_CONFIG", async () => {
+    const dir = workDir();
+    withMock(dir, "allow");
+    process.env.APPA_CONFIG = "/tmp/playground/appa.toml";
+    const harness = await loadExtension();
+    await startSession(harness);
+    const first = recordedArgv(dir)[0];
+    assert.ok(first?.includes("--ensure-runtime"), `argv: ${JSON.stringify(first)}`);
+    const configIndex = first?.indexOf("--config");
+    assert.notEqual(configIndex, -1);
+    assert.equal(first?.[Number(configIndex) + 1], "/tmp/playground/appa.toml");
+  });
+
+  it("omits --config when APPA_CONFIG is unset", async () => {
+    const dir = workDir();
+    withMock(dir, "allow");
+    delete process.env.APPA_CONFIG;
+    const harness = await loadExtension();
+    await startSession(harness);
+    const first = recordedArgv(dir)[0];
+    assert.ok(first?.includes("--ensure-runtime"));
+    assert.ok(!first?.includes("--config"));
+  });
+
+  it("starts nothing when ungated", async () => {
+    const dir = workDir();
+    withMock(dir, "allow");
+    delete process.env.APPA_GATE;
+    delete process.env.APPA_CONFIG;
+    const harness = await loadExtension();
+    await startSession(harness);
+    assert.deepEqual(recordedArgv(dir), []);
+    assert.deepEqual(recordedLines(dir), []);
   });
 });
 
