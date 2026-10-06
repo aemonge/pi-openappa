@@ -38,7 +38,7 @@ interface Harness {
   ctx: unknown;
 }
 
-async function loadExtension(): Promise<Harness> {
+async function loadExtension(cwd?: string): Promise<Harness> {
   const mod = await import(pathToFileURL(join(here, "..", "extensions", "index.ts")).href);
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, { handler: Handler }>();
@@ -49,7 +49,7 @@ async function loadExtension(): Promise<Harness> {
   };
   mod.default(fakePi);
   const ctx = {
-    cwd: "/home/aemonge/projects/pi-openappa",
+    cwd: cwd ?? "/home/aemonge/projects/pi-openappa",
     hasUI: false,
     sessionManager: { getSessionId: () => SESSION },
     ui: { notify: () => {} },
@@ -88,6 +88,14 @@ const bashResult = {
   details: { stdout: "file1 file2", exitcode: 0 },
   isError: false,
 };
+
+beforeEach(() => {
+  // Isolate gate resolution from real machine state: clean config dir per
+  // test, no gate env. Tests that need gating set it up inside themselves.
+  process.env.XDG_CONFIG_HOME = join(workDir(), "xdg");
+  delete process.env.APPA_GATE;
+  delete process.env.APPA_CONFIG;
+});
 
 describe("gate off: extension is inert", () => {
   beforeEach(() => {
@@ -316,6 +324,57 @@ describe("auto-start on gated session start", () => {
     await startSession(harness);
     assert.deepEqual(recordedArgv(dir), []);
     assert.deepEqual(recordedLines(dir), []);
+  });
+});
+
+describe("project-scoped protection (.pi/openappa)", () => {
+  it("gates the project and passes the marker's policy as --config", async () => {
+    const dir = workDir();
+    withMock(dir, "allow");
+    delete process.env.APPA_GATE;
+    delete process.env.APPA_CONFIG;
+    const proj = join(dir, "proj");
+    mkdirSync(join(proj, ".pi"), { recursive: true });
+    writeFileSync(join(proj, ".pi", "openappa"), "appa.toml\n");
+    const harness = await loadExtension(proj);
+    await startSession(harness);
+    const first = recordedArgv(dir)[0];
+    assert.ok(first?.includes("--ensure-runtime"), `argv: ${JSON.stringify(first)}`);
+    const index = first?.indexOf("--config");
+    assert.notEqual(index, -1);
+    assert.equal(first?.[Number(index) + 1], join(proj, "appa.toml"));
+    const call = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
+    assert.equal(call, undefined);
+  });
+
+  it("empty marker content passes no --config", async () => {
+    const dir = workDir();
+    withMock(dir, "allow");
+    delete process.env.APPA_GATE;
+    delete process.env.APPA_CONFIG;
+    const proj = join(dir, "proj2");
+    mkdirSync(join(proj, ".pi"), { recursive: true });
+    writeFileSync(join(proj, ".pi", "openappa"), "");
+    const harness = await loadExtension(proj);
+    await startSession(harness);
+    const first = recordedArgv(dir)[0];
+    assert.ok(first?.includes("--ensure-runtime"));
+    assert.ok(!first?.includes("--config"));
+  });
+
+  it("explicit APPA_CONFIG wins over marker content", async () => {
+    const dir = workDir();
+    withMock(dir, "allow");
+    delete process.env.APPA_GATE;
+    process.env.APPA_CONFIG = "/tmp/env-policy.toml";
+    const proj = join(dir, "proj3");
+    mkdirSync(join(proj, ".pi"), { recursive: true });
+    writeFileSync(join(proj, ".pi", "openappa"), "appa.toml\n");
+    const harness = await loadExtension(proj);
+    await startSession(harness);
+    const first = recordedArgv(dir)[0];
+    const index = first?.indexOf("--config");
+    assert.equal(first?.[Number(index) + 1], "/tmp/env-policy.toml");
   });
 });
 

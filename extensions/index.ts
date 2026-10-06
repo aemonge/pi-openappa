@@ -21,7 +21,7 @@ import {
   toolResponseFrom,
 } from "../src/adapter.ts";
 import { invokeAppaHook } from "../src/hook-client.ts";
-import { captureGate, checkHealth, isAlwaysOn, setAlwaysOn, type GateState } from "../src/gate.ts";
+import { captureGate, checkHealth, setAlwaysOn, type GateState } from "../src/gate.ts";
 
 interface TextPart {
   type: "text";
@@ -42,22 +42,21 @@ export default function (pi: ExtensionAPI): void {
   const gated = (): boolean => gate?.gated === true;
 
   pi.on("session_start", async (event, ctx) => {
-    gate = captureGate(process.env);
+    gate = captureGate(process.env, ctx.cwd);
     sessionId = ctx.sessionManager.getSessionId();
     if (!gated()) return;
 
-    const appaConfig = process.env.APPA_CONFIG;
     const outcome = await invokeAppaHook(
       sessionStartPayload(sessionId, event.reason, ctx.cwd),
       {
         ensureRuntime: true,
-        ...(appaConfig !== undefined ? { config: appaConfig } : {}),
+        ...(gate.config !== undefined ? { config: gate.config } : {}),
       },
     );
     if (outcome.exitCode !== 0 && ctx.hasUI) {
       const remedy =
-        appaConfig === undefined
-          ? " Provide a policy (set APPA_CONFIG or write ~/.config/appa/appa.toml), or run /appa off."
+        gate.config === undefined
+          ? " Provide a policy (this project's .pi/openappa, APPA_CONFIG, or ~/.config/appa/appa.toml), or run /appa off."
           : "";
       ctx.ui.notify(
         `OpenAPPA gated but the runtime did not answer (${gate.runtimeUrl}): ` +
@@ -129,7 +128,7 @@ export default function (pi: ExtensionAPI): void {
       const arg = args.trim();
       if (arg === "on" || arg === "off") {
         setAlwaysOn(process.env, arg === "on");
-        gate = captureGate(process.env);
+        gate = captureGate(process.env, ctx.cwd);
         if (ctx.hasUI) {
           ctx.ui.notify(
             arg === "on"
@@ -140,18 +139,19 @@ export default function (pi: ExtensionAPI): void {
         }
         return;
       }
-      const state = gate ?? captureGate(process.env);
+      const state = gate ?? captureGate(process.env, ctx.cwd);
+      const mode =
+        state.source === "project"
+          ? "project (.pi/openappa)"
+          : state.source === "env"
+            ? "launch (APPA_GATE=1)"
+            : state.source === "always-on"
+              ? "always-on (/appa off to disable)"
+              : "off — /appa on enables it for every session";
       const lines: string[] = [];
-      lines.push(
-        state.gated
-          ? `Protection: ON (session ${sessionId || "not started"})`
-          : "Protection: off — /appa on enables it for every session",
-      );
-      lines.push(
-        isAlwaysOn(process.env)
-          ? "Always-on: enabled (/appa off to disable)"
-          : "Always-on: off",
-      );
+      lines.push(state.gated ? `Protection: ON (session ${sessionId || "not started"})` : `Protection: off — ${mode}`);
+      if (state.gated) lines.push(`Mode: ${mode}`);
+      if (state.config !== undefined) lines.push(`Policy: ${state.config}`);
       lines.push(`Runtime: ${state.runtimeUrl}`);
       const health = await checkHealth(state.runtimeUrl);
       lines.push(`Health: ${health.ok ? "ok" : `unreachable (${health.detail})`}`);
