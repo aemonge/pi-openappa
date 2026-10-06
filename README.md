@@ -28,12 +28,20 @@ pi install ./pi-openappa          # from a checkout
 
 ## Protect sessions
 
-Protection is opt-in, in one of two ways:
+Protection is opt-in, in one of three ways:
 
-- **Built-in (recommended):** run `/appa on` once. From then on every Pi
-  session is protected — no alias, no env, no launcher. `/appa off` disables.
-- **Per launch:** `APPA_GATE=1 pi` (the `clappa`-style launcher route),
-  e.g. `alias pippa='APPA_GATE=1 pi'` for occasional use.
+- **Project-scoped (recommended):** create `<project>/.pi/openappa` — sessions
+  started in that directory are protected, sessions elsewhere are not. The
+  marker's optional content names that project's policy (absolute or
+  cwd-relative); empty content falls back to `APPA_CONFIG` or APPA's default:
+
+  ```sh
+  cd your-project && mkdir -p .pi && echo "appa.toml" > .pi/openappa
+  ```
+
+- **Built-in:** run `/appa on` once — every Pi session everywhere is
+  protected. `/appa off` disables.
+- **Per launch:** `APPA_GATE=1 pi` (the `clappa`-style launcher route).
 
 A gated session brings the runtime up on its own: `session_start` invokes
 `appa hook --ensure-runtime`, passing `--config "$APPA_CONFIG"` when set and
@@ -52,6 +60,7 @@ every tool call blocked. Ungated sessions never invoke the hook.
 | Variable | Default | Meaning |
 |---|---|---|
 | `APPA_GATE` | unset | `1` protects this session (read once at launch) |
+| `.pi/openappa` | absent | Project marker: gates sessions started in that directory; optional content = policy path |
 | `APPA_RUNTIME_URL` | `http://127.0.0.1:8787` | Runtime endpoint (loopback only) |
 | `APPA_CONFIG` | unset | `appa.toml` the session auto-starts the runtime with |
 | `APPA_HOOK_BIN` | `appa` | Hook binary to invoke |
