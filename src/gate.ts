@@ -1,16 +1,20 @@
 /**
- * Session gate: protection is opt-in, fixed at session start.
+ * Session gate: protection is ON by default and fixed at session start.
  *
- * Three ways a session becomes protected, most specific first for reporting:
- * - a project marker `<cwd>/.pi/openappa` (project-scoped; optional content
- *   names that project's policy, absolute or cwd-relative),
- * - launched with APPA_GATE=1 (the launcher route, mirroring `clappa`), or
- * - always-on mode, persisted by `/appa on` (marker file below).
+ * Opt-outs, most specific first:
+ * - APPA_GATE=1 / APPA_GATE=0 force on/off for one launch,
+ * - a project opt-out marker `<cwd>/.pi/no-openappa`,
+ * - a project marker `<cwd>/.pi/openappa` (which also names that project's
+ *   policy, absolute or cwd-relative),
+ * - the global `/appa off` marker below; `/appa on` clears it.
+ * Otherwise the session is protected (the default).
  *
  * An explicit APPA_CONFIG always wins as the policy source; otherwise a
  * project marker's content is used; otherwise APPA's own default. The gate is
  * captured once per session so a session cannot disable its own protection
  * mid-run; `/appa on|off` are deliberate user commands and do re-resolve.
+ * The legacy `always-on` marker from opt-in days is ignored; `/appa on`
+ * removes it.
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -25,7 +29,13 @@ function baseConfigDir(env: NodeJS.ProcessEnv): string {
   return join(env.HOME ?? "", ".config");
 }
 
-export function alwaysOnMarkerPath(env: NodeJS.ProcessEnv): string {
+/** Global opt-out written by `/appa off`; `/appa on` removes it. */
+export function globalOffMarkerPath(env: NodeJS.ProcessEnv): string {
+  return join(baseConfigDir(env), "pi-openappa", "off");
+}
+
+/** Legacy opt-in marker from before default-on; ignored, cleared by `/appa on`. */
+export function legacyAlwaysOnMarkerPath(env: NodeJS.ProcessEnv): string {
   return join(baseConfigDir(env), "pi-openappa", "always-on");
 }
 
@@ -33,21 +43,45 @@ export function projectMarkerPath(cwd: string): string {
   return join(cwd, ".pi", "openappa");
 }
 
-export function isAlwaysOn(env: NodeJS.ProcessEnv): boolean {
-  return existsSync(alwaysOnMarkerPath(env));
+export function projectNoMarkerPath(cwd: string): string {
+  return join(cwd, ".pi", "no-openappa");
 }
 
-export function setAlwaysOn(env: NodeJS.ProcessEnv, on: boolean): void {
-  const marker = alwaysOnMarkerPath(env);
-  if (on) {
+export function isGloballyOff(env: NodeJS.ProcessEnv): boolean {
+  return existsSync(globalOffMarkerPath(env));
+}
+
+export function setGloballyOff(env: NodeJS.ProcessEnv, off: boolean): void {
+  const marker = globalOffMarkerPath(env);
+  if (off) {
     mkdirSync(dirname(marker), { recursive: true });
     writeFileSync(marker, "");
   } else {
     rmSync(marker, { force: true });
+    rmSync(legacyAlwaysOnMarkerPath(env), { force: true });
   }
 }
 
-export type GateSource = "project" | "env" | "always-on" | "off";
+/**
+ * Does APPA's own default policy exist? Heuristic mirror of the runtime's
+ * lookup: `$XDG_CONFIG_HOME/appa/appa.toml` or `~/.config/appa/appa.toml`.
+ */
+export function appaDefaultPolicyExists(env: NodeJS.ProcessEnv): boolean {
+  const xdg = env.XDG_CONFIG_HOME;
+  const candidates = [
+    ...(xdg !== undefined && xdg !== "" ? [join(xdg, "appa", "appa.toml")] : []),
+    join(env.HOME ?? "", ".config", "appa", "appa.toml"),
+  ];
+  return candidates.some((candidate) => existsSync(candidate));
+}
+
+export type GateSource =
+  | "env-on"
+  | "env-off"
+  | "project"
+  | "project-off"
+  | "global-off"
+  | "default";
 
 export interface GateState {
   /** Protection active for this session. */
@@ -83,27 +117,46 @@ export function captureGate(env: NodeJS.ProcessEnv, cwd?: string): GateState {
       ? env.APPA_CONFIG
       : undefined;
   const projectGated = cwd !== undefined && existsSync(projectMarkerPath(cwd));
+  const projectOff = cwd !== undefined && existsSync(projectNoMarkerPath(cwd));
   const projectCfg =
     projectGated && cwd !== undefined ? projectConfig(cwd) : undefined;
-  const config = explicitConfig ?? projectCfg;
 
-  if (env.APPA_GATE === "1" || projectGated) {
+  // An explicit launch choice beats every marker.
+  if (env.APPA_GATE === "1") {
+    const config = explicitConfig ?? projectCfg;
     return {
       gated: true,
-      source: projectGated ? "project" : "env",
+      source: "env-on",
       ...base,
       ...(config !== undefined ? { config } : {}),
     };
   }
-  if (isAlwaysOn(env)) {
+  if (env.APPA_GATE === "0") {
+    return { gated: false, source: "env-off", ...base };
+  }
+  // Project level: an opt-out beats the project's own opt-in.
+  if (projectOff) {
+    return { gated: false, source: "project-off", ...base };
+  }
+  if (projectGated) {
+    const config = explicitConfig ?? projectCfg;
     return {
       gated: true,
-      source: "always-on",
+      source: "project",
       ...base,
-      ...(explicitConfig !== undefined ? { config: explicitConfig } : {}),
+      ...(config !== undefined ? { config } : {}),
     };
   }
-  return { gated: false, source: "off", ...base };
+  // Global opt-out, then the default: protection on.
+  if (isGloballyOff(env)) {
+    return { gated: false, source: "global-off", ...base };
+  }
+  return {
+    gated: true,
+    source: "default",
+    ...base,
+    ...(explicitConfig !== undefined ? { config: explicitConfig } : {}),
+  };
 }
 
 export interface HealthResult {

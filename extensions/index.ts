@@ -20,8 +20,15 @@ import {
   stopPayload,
   toolResponseFrom,
 } from "../src/adapter.ts";
-import { invokeAppaHook } from "../src/hook-client.ts";
-import { captureGate, checkHealth, setAlwaysOn, type GateState } from "../src/gate.ts";
+import { invokeAppaHook, resolveHookBin, type HookOutcome } from "../src/hook-client.ts";
+import { installAppa, type InstallOutcome } from "../src/installer.ts";
+import {
+  appaDefaultPolicyExists,
+  captureGate,
+  checkHealth,
+  setGloballyOff,
+  type GateState,
+} from "../src/gate.ts";
 
 interface TextPart {
   type: "text";
@@ -32,6 +39,8 @@ export default function (pi: ExtensionAPI): void {
   /** Launch-fixed protection state; null until the session starts. */
   let gate: GateState | null = null;
   let sessionId = "";
+  /** No policy anywhere and nothing answered: this session runs unprotected. */
+  let unprotected = false;
   /**
    * toolCallId → the exact `input` object sent in the PreToolUse payload.
    * PostToolUse must echo it byte-identically or the runtime withholds the
@@ -39,21 +48,77 @@ export default function (pi: ExtensionAPI): void {
    */
   const pendingInputs = new Map<string, Record<string, unknown>>();
 
-  const gated = (): boolean => gate?.gated === true;
+  const gated = (): boolean => gate?.gated === true && !unprotected;
 
   pi.on("session_start", async (event, ctx) => {
     gate = captureGate(process.env, ctx.cwd);
     sessionId = ctx.sessionManager.getSessionId();
-    if (!gated()) return;
+    if (!gate.gated) return;
+    unprotected = false;
 
-    const outcome = await invokeAppaHook(
-      sessionStartPayload(sessionId, event.reason, ctx.cwd),
-      {
-        ensureRuntime: true,
-        ...(gate.config !== undefined ? { config: gate.config } : {}),
-      },
-    );
-    if (outcome.exitCode !== 0 && ctx.hasUI) {
+    const payload = sessionStartPayload(sessionId, event.reason, ctx.cwd);
+    const options = {
+      ensureRuntime: true,
+      ...(gate.config !== undefined ? { config: gate.config } : {}),
+    };
+    const notify = (message: string, kind: "info" | "warning"): void => {
+      if (ctx.hasUI) ctx.ui.notify(message, kind);
+    };
+    let outcome = await invokeAppaHook(payload, options);
+    let warnedAlready = false;
+    // A missing default `appa` is self-provisioned: run the official install
+    // script once, then retry bringing the runtime up. Custom APPA_HOOK_BINs
+    // are the user's own and never auto-installed.
+    if (outcome.binaryMissing && resolveHookBin(process.env) === "appa") {
+      notify(
+        "`appa` was not found — installing the OpenAPPA runtime " +
+          "(https://openappa.com/install.sh)…",
+        "info",
+      );
+      const install = await installAppa();
+      if (install.exitCode !== 0) {
+        warnedAlready = true;
+        notify(
+          `OpenAPPA auto-install failed: ${outcomeTail(install)}. ` +
+            "Tool calls stay blocked; install `appa` manually (see the README) or run /appa off.",
+          "warning",
+        );
+      } else {
+        const retry = await invokeAppaHook(payload, options);
+        if (retry.binaryMissing) {
+          warnedAlready = true;
+          notify(
+            "OpenAPPA auto-install finished but `appa` is still not on PATH. " +
+              `Installer output: ${outcomeTail(install)} — restart the session once PATH has it.`,
+            "warning",
+          );
+        }
+        outcome = retry;
+      }
+    }
+    if (outcome.exitCode !== 0) {
+      // No policy anywhere and nothing answering: run this session
+      // unprotected with one warning instead of fail-closed (the configured
+      // default). A named policy that fails stays fail-closed below.
+      if (
+        resolveHookBin(process.env) === "appa" &&
+        gate.config === undefined &&
+        !appaDefaultPolicyExists(process.env) &&
+        !(await checkHealth(gate.runtimeUrl)).ok
+      ) {
+        unprotected = true;
+        if (!warnedAlready) {
+          notify(
+            "OpenAPPA is on by default, but no policy exists (APPA_CONFIG, " +
+              ".pi/openappa, or ~/.config/appa/appa.toml) and no runtime answers " +
+              `at ${gate.runtimeUrl} — this session runs unprotected. ` +
+              "Write a policy, or run /appa off.",
+            "warning",
+          );
+        }
+        return;
+      }
+      if (ctx.hasUI && !warnedAlready) {
       const remedy =
         gate.config === undefined
           ? " Provide a policy (this project's .pi/openappa, APPA_CONFIG, or ~/.config/appa/appa.toml), or run /appa off."
@@ -64,6 +129,7 @@ export default function (pi: ExtensionAPI): void {
           "Tool calls will be blocked until it answers.",
         "warning",
       );
+      }
     }
   });
 
@@ -123,17 +189,17 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("appa", {
-    description: "Show OpenAPPA status; `appa on|off` toggles always-on protection",
+    description: "Show OpenAPPA status; `appa on|off` toggles protection globally",
     handler: async (args, ctx) => {
       const arg = args.trim();
       if (arg === "on" || arg === "off") {
-        setAlwaysOn(process.env, arg === "on");
+        setGloballyOff(process.env, arg === "off");
         gate = captureGate(process.env, ctx.cwd);
         if (ctx.hasUI) {
           ctx.ui.notify(
             arg === "on"
-              ? "OpenAPPA always-on enabled: every future Pi session is protected."
-              : "OpenAPPA always-on disabled.",
+              ? "OpenAPPA protection re-enabled: on by default for every session."
+              : "OpenAPPA protection disabled globally (/appa on re-enables).",
             "info",
           );
         }
@@ -143,14 +209,21 @@ export default function (pi: ExtensionAPI): void {
       const mode =
         state.source === "project"
           ? "project (.pi/openappa)"
-          : state.source === "env"
+          : state.source === "env-on"
             ? "launch (APPA_GATE=1)"
-            : state.source === "always-on"
-              ? "always-on (/appa off to disable)"
-              : "off — /appa on enables it for every session";
+            : state.source === "env-off"
+              ? "launch opt-out (APPA_GATE=0)"
+              : state.source === "project-off"
+                ? "project opt-out (.pi/no-openappa)"
+                : state.source === "global-off"
+                  ? "global opt-out (/appa on re-enables)"
+                  : "on by default (/appa off disables)";
       const lines: string[] = [];
       lines.push(state.gated ? `Protection: ON (session ${sessionId || "not started"})` : `Protection: off — ${mode}`);
-      if (state.gated) lines.push(`Mode: ${mode}`);
+      if (unprotected) {
+        lines.push("Session: unprotected — no policy found; see the startup warning.");
+      }
+      if (state.gated && !unprotected) lines.push(`Mode: ${mode}`);
       if (state.config !== undefined) lines.push(`Policy: ${state.config}`);
       lines.push(`Runtime: ${state.runtimeUrl}`);
       const health = await checkHealth(state.runtimeUrl);
@@ -164,6 +237,13 @@ export default function (pi: ExtensionAPI): void {
       }
     },
   });
+}
+
+/** Last ~200 chars of installer output, whitespace-normalized, for notices. */
+function outcomeTail(outcome: InstallOutcome): string {
+  const text = `${outcome.stderr} ${outcome.stdout}`.trim().replace(/\s+/g, " ");
+  if (text === "") return "(no output)";
+  return text.length > 200 ? `…${text.slice(-200)}` : text;
 }
 
 function joinContent(content: ReadonlyArray<unknown>): string {

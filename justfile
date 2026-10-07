@@ -30,3 +30,10 @@ remove:
 # Publish to npm (requires `npm login`; the Pi gallery indexes the pi-package keyword)
 publish: check
     npm publish
+
+# Ship a version: sync the lockfile version, run every check, publish to npm
+# (run the README smoke test right after)
+deploy:
+    npm install --package-lock-only --no-audit --no-fund
+    just check
+    npm publish

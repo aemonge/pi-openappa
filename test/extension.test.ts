@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, describe, it } from "node:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, writeFileSync, copyFileSync, chmodSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,7 +11,7 @@ const MOCK_BIN = join(here, "fixtures", "mock-appa.mjs");
 const SESSION = "22222222-2222-2222-2222-222222222222";
 
 /** Environment keys this suite mutates; restored after every test. */
-const KEYS = ["APPA_GATE", "APPA_HOOK_BIN", "MOCK_MODE", "MOCK_RECORD", "APPA_HOOK_TIMEOUT_MS", "APPA_CONFIG", "XDG_CONFIG_HOME"];
+const KEYS = ["APPA_GATE", "APPA_HOOK_BIN", "MOCK_MODE", "MOCK_RECORD", "APPA_HOOK_TIMEOUT_MS", "APPA_CONFIG", "XDG_CONFIG_HOME", "APPA_INSTALL_CMD", "APPA_INSTALL_TIMEOUT_MS", "PATH", "HOME", "APPA_RUNTIME_URL"];
 const saved: Record<string, string | undefined> = {};
 for (const key of KEYS) saved[key] = process.env[key];
 
@@ -78,6 +79,20 @@ function withMock(dir: string, mode: string): void {
   process.env.MOCK_RECORD = join(dir, "record.jsonl");
 }
 
+/** PATH with `appa` absent: extra dirs first, then only node/curl/sh system dirs. */
+function hermeticPath(...extraDirs: string[]): string {
+  return [...extraDirs, dirname(process.execPath), "/usr/bin", "/bin"].join(":");
+}
+
+/** Give the fake ctx a recording UI; returns [kind, message] pairs. */
+function enableUiSpy(harness: Harness): Array<[string, string]> {
+  const notices: Array<[string, string]> = [];
+  const ctx = harness.ctx as { hasUI?: boolean; ui?: { notify: (m: string, k: string) => void } };
+  ctx.hasUI = true;
+  ctx.ui = { notify: (message, kind) => notices.push([kind, message]) };
+  return notices;
+}
+
 const bashCall = { type: "tool_call", toolCallId: "call-1", toolName: "bash", input: { command: "ls", description: "list" } };
 const bashResult = {
   type: "tool_result",
@@ -90,16 +105,19 @@ const bashResult = {
 };
 
 beforeEach(() => {
-  // Isolate gate resolution from real machine state: clean config dir per
-  // test, no gate env. Tests that need gating set it up inside themselves.
+  // Isolate gate resolution from real machine state: clean config dir and
+  // HOME per test (no off markers, no APPA default policy), no gate env.
+  // Tests that want to opt out set APPA_GATE=0 or a marker themselves.
   process.env.XDG_CONFIG_HOME = join(workDir(), "xdg");
+  process.env.HOME = join(workDir(), "home");
   delete process.env.APPA_GATE;
   delete process.env.APPA_CONFIG;
+  delete process.env.APPA_RUNTIME_URL;
 });
 
-describe("gate off: extension is inert", () => {
+describe("opted-out session (APPA_GATE=0): extension is inert", () => {
   beforeEach(() => {
-    delete process.env.APPA_GATE;
+    process.env.APPA_GATE = "0";
   });
 
   it("never invokes the hook and passes everything through", async () => {
@@ -191,6 +209,10 @@ describe("gated session through the scripted mock", () => {
   it("fails closed when the hook binary cannot start", async () => {
     const dir = workDir();
     withMock(dir, "allow");
+    // A named config keeps this fail-closed: with none, a failed start with
+    // nothing answering downgrades the session to unprotected instead.
+    process.env.APPA_CONFIG = "/tmp/policy.toml";
+    process.env.APPA_RUNTIME_URL = "http://127.0.0.1:8799";
     process.env.APPA_HOOK_BIN = join(dir, "does-not-exist");
     const harness = await loadExtension();
     await startSession(harness);
@@ -202,6 +224,8 @@ describe("gated session through the scripted mock", () => {
   it("fails closed on hook timeout", async () => {
     const dir = workDir();
     withMock(dir, "sleep");
+    process.env.APPA_CONFIG = "/tmp/policy.toml"; // no no-policy downgrade
+    process.env.APPA_RUNTIME_URL = "http://127.0.0.1:8799";
     process.env.APPA_HOOK_TIMEOUT_MS = "150";
     const harness = await loadExtension();
     await startSession(harness);
@@ -315,15 +339,104 @@ describe("auto-start on gated session start", () => {
     assert.ok(!first?.includes("--config"));
   });
 
-  it("starts nothing when ungated", async () => {
+  it("starts nothing when opted out (APPA_GATE=0)", async () => {
     const dir = workDir();
     withMock(dir, "allow");
-    delete process.env.APPA_GATE;
+    process.env.APPA_GATE = "0";
     delete process.env.APPA_CONFIG;
     const harness = await loadExtension();
     await startSession(harness);
     assert.deepEqual(recordedArgv(dir), []);
     assert.deepEqual(recordedLines(dir), []);
+  });
+});
+
+describe("auto-install on gated session start (default-on)", () => {
+  it("installs the default appa and retries ensure-runtime", async () => {
+    const dir = workDir();
+    const binDir = join(dir, "bin");
+    mkdirSync(binDir);
+    // No APPA_GATE: protection is on by default now.
+    delete process.env.APPA_HOOK_BIN;
+    delete process.env.APPA_CONFIG;
+    process.env.MOCK_MODE = "allow";
+    process.env.MOCK_RECORD = join(dir, "record.jsonl");
+    const installed = join(binDir, "appa");
+    process.env.APPA_INSTALL_CMD = `cp ${MOCK_BIN} ${installed} && chmod +x ${installed}`;
+    process.env.PATH = hermeticPath(binDir);
+    const harness = await loadExtension();
+    const notices = enableUiSpy(harness);
+    await startSession(harness);
+    assert.ok(existsSync(installed), "installer ran and placed appa");
+    const first = recordedArgv(dir)[0];
+    assert.ok(first?.includes("--ensure-runtime"), `argv: ${JSON.stringify(first)}`);
+    assert.ok(!first?.includes("--config"));
+    assert.ok(notices.some(([kind]) => kind === "info"), "install notice shown");
+    assert.deepEqual(
+      notices.filter(([kind]) => kind === "warning"),
+      [],
+      `no warnings on success: ${JSON.stringify(notices)}`,
+    );
+  });
+
+  it("reports a failed install once and never retries the hook", async () => {
+    const dir = workDir();
+    process.env.APPA_GATE = "1";
+    delete process.env.APPA_HOOK_BIN;
+    delete process.env.APPA_CONFIG;
+    process.env.MOCK_MODE = "allow";
+    process.env.MOCK_RECORD = join(dir, "record.jsonl");
+    process.env.APPA_INSTALL_CMD = "echo boom >&2; exit 3";
+    process.env.APPA_RUNTIME_URL = "http://127.0.0.1:8799";
+    process.env.PATH = hermeticPath(join(dir, "bin"));
+    const harness = await loadExtension();
+    const notices = enableUiSpy(harness);
+    await startSession(harness);
+    assert.deepEqual(recordedArgv(dir), []);
+    assert.deepEqual(recordedLines(dir), []);
+    const warnings = notices.filter(([kind]) => kind === "warning");
+    assert.equal(warnings.length, 1, JSON.stringify(notices));
+    assert.ok(warnings[0]?.[1].includes("auto-install failed"));
+    assert.ok(warnings[0]?.[1].includes("boom"));
+    assert.ok(warnings[0]?.[1].includes("blocked"));
+  });
+
+  it("warns once when the install succeeds but appa is still missing", async () => {
+    const dir = workDir();
+    process.env.APPA_GATE = "1";
+    delete process.env.APPA_HOOK_BIN;
+    delete process.env.APPA_CONFIG;
+    process.env.MOCK_MODE = "allow";
+    process.env.MOCK_RECORD = join(dir, "record.jsonl");
+    process.env.APPA_INSTALL_CMD = "true";
+    process.env.APPA_RUNTIME_URL = "http://127.0.0.1:8799";
+    process.env.PATH = hermeticPath(join(dir, "bin"));
+    const harness = await loadExtension();
+    const notices = enableUiSpy(harness);
+    await startSession(harness);
+    assert.deepEqual(recordedArgv(dir), []);
+    const warnings = notices.filter(([kind]) => kind === "warning");
+    assert.equal(warnings.length, 1, JSON.stringify(notices));
+    assert.ok(warnings[0]?.[1].includes("still not on PATH"));
+  });
+
+  it("never auto-installs a custom APPA_HOOK_BIN", async () => {
+    const dir = workDir();
+    process.env.APPA_GATE = "1";
+    process.env.APPA_HOOK_BIN = join(dir, "missing-bin");
+    delete process.env.APPA_CONFIG;
+    process.env.MOCK_MODE = "allow";
+    process.env.MOCK_RECORD = join(dir, "record.jsonl");
+    const marker = join(dir, "install-ran");
+    process.env.APPA_INSTALL_CMD = `touch ${marker}`;
+    process.env.PATH = hermeticPath();
+    const harness = await loadExtension();
+    const notices = enableUiSpy(harness);
+    await startSession(harness);
+    assert.ok(!existsSync(marker), "installer must not run for custom binaries");
+    const warnings = notices.filter(([kind]) => kind === "warning");
+    assert.equal(warnings.length, 1, JSON.stringify(notices));
+    assert.ok(warnings[0]?.[1].includes("did not answer"), "generic fail-closed warning");
   });
 });
 
@@ -378,14 +491,11 @@ describe("project-scoped protection (.pi/openappa)", () => {
   });
 });
 
-describe("always-on mode (marker file)", () => {
-  it("gates every session once the marker exists", async () => {
+describe("global opt-out (/appa off marker)", () => {
+  it("gates every session by default, with no markers or env", async () => {
     const dir = workDir();
     withMock(dir, "allow");
     delete process.env.APPA_GATE;
-    process.env.XDG_CONFIG_HOME = join(dir, "xdg");
-    mkdirSync(join(dir, "xdg", "pi-openappa"), { recursive: true });
-    writeFileSync(join(dir, "xdg", "pi-openappa", "always-on"), "");
     const harness = await loadExtension();
     await startSession(harness);
     const call = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
@@ -393,11 +503,13 @@ describe("always-on mode (marker file)", () => {
     assert.ok(recordedArgv(dir).length > 0, "hook was invoked without APPA_GATE");
   });
 
-  it("inert when the marker is absent", async () => {
+  it("is inert once the global off marker exists", async () => {
     const dir = workDir();
     withMock(dir, "allow");
     delete process.env.APPA_GATE;
-    process.env.XDG_CONFIG_HOME = join(dir, "xdg-clean");
+    process.env.XDG_CONFIG_HOME = join(dir, "xdg");
+    mkdirSync(join(dir, "xdg", "pi-openappa"), { recursive: true });
+    writeFileSync(join(dir, "xdg", "pi-openappa", "off"), "");
     const harness = await loadExtension();
     await startSession(harness);
     const call = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
@@ -407,18 +519,38 @@ describe("always-on mode (marker file)", () => {
 });
 
 describe("/appa on|off", () => {
-  it("on creates the marker and gates immediately; off removes it", async () => {
+  it("off writes the global marker and ungates; on clears it and re-gates", async () => {
     const dir = workDir();
-    process.env.XDG_CONFIG_HOME = join(dir, "xdg");
+    withMock(dir, "allow");
     delete process.env.APPA_GATE;
+    process.env.XDG_CONFIG_HOME = join(dir, "xdg");
     const harness = await loadExtension();
     const command = harness.commands.get("appa");
     assert.ok(command);
-    await command.handler("on", harness.ctx);
-    assert.ok(existsSync(join(dir, "xdg", "pi-openappa", "always-on")));
-    const gated = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
-    assert.equal(gated, undefined); // gated now: would invoke hook (mock unset -> inert record empty ok)
     await command.handler("off", harness.ctx);
+    const marker = join(dir, "xdg", "pi-openappa", "off");
+    assert.ok(existsSync(marker));
+    const argvAfterOff = recordedArgv(dir).length;
+    await startSession(harness);
+    const optedOut = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
+    assert.equal(optedOut, undefined);
+    assert.equal(recordedArgv(dir).length, argvAfterOff, "no hook while opted out");
+    await command.handler("on", harness.ctx);
+    assert.ok(!existsSync(marker));
+    await startSession(harness);
+    const reGated = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
+    assert.equal(reGated, undefined);
+    assert.ok(recordedArgv(dir).length > argvAfterOff, "hook invoked again after /appa on");
+  });
+
+  it("on also clears the legacy always-on marker", async () => {
+    const dir = workDir();
+    process.env.XDG_CONFIG_HOME = join(dir, "xdg");
+    mkdirSync(join(dir, "xdg", "pi-openappa"), { recursive: true });
+    writeFileSync(join(dir, "xdg", "pi-openappa", "always-on"), "");
+    delete process.env.APPA_GATE;
+    const harness = await loadExtension();
+    await harness.commands.get("appa")!.handler("on", harness.ctx);
     assert.ok(!existsSync(join(dir, "xdg", "pi-openappa", "always-on")));
   });
 
@@ -443,5 +575,93 @@ describe("/appa command", () => {
     assert.ok(command, "/appa registered");
     // No UI in this harness; the handler must still complete without throwing.
     await command.handler("", harness.ctx);
+  });
+});
+
+describe("no-policy downgrade (runs unprotected)", () => {
+  function noPolicySetup(dir: string): void {
+    delete process.env.APPA_GATE;
+    delete process.env.APPA_CONFIG;
+    delete process.env.APPA_HOOK_BIN;
+    // The mock stands in for the default `appa` binary: present on PATH (so
+    // no auto-install triggers), crashing on ensure-runtime (spawn works).
+    const binDir = join(dir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const asAppa = join(binDir, "appa");
+    copyFileSync(MOCK_BIN, asAppa);
+    chmodSync(asAppa, 0o755);
+    process.env.MOCK_MODE = "crash";
+    process.env.MOCK_RECORD = join(dir, "record.jsonl");
+    process.env.APPA_RUNTIME_URL = "http://127.0.0.1:8799"; // nothing answers
+    process.env.APPA_INSTALL_CMD = "exit 1"; // tripwire: must never run
+    process.env.PATH = hermeticPath(binDir);
+  }
+
+  it("runs the session unprotected with one warning when no policy exists", async () => {
+    const dir = workDir();
+    noPolicySetup(dir);
+    const harness = await loadExtension();
+    const notices = enableUiSpy(harness);
+    await startSession(harness);
+    const warnings = notices.filter(([kind]) => kind === "warning");
+    assert.equal(warnings.length, 1, JSON.stringify(notices));
+    assert.ok(warnings[0]?.[1].includes("runs unprotected"));
+    // The initial SessionStart went out; tool calls afterwards do not.
+    assert.equal(recordedLines(dir).length, 1);
+    const call = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
+    assert.equal(call, undefined);
+    assert.equal(recordedLines(dir).length, 1, "no hook while unprotected");
+  });
+
+  it("stays fail-closed when APPA's default policy exists", async () => {
+    const dir = workDir();
+    noPolicySetup(dir);
+    mkdirSync(join(process.env.XDG_CONFIG_HOME!, "appa"), { recursive: true });
+    writeFileSync(join(process.env.XDG_CONFIG_HOME!, "appa", "appa.toml"), "");
+    const harness = await loadExtension();
+    const notices = enableUiSpy(harness);
+    await startSession(harness);
+    const warnings = notices.filter(([kind]) => kind === "warning");
+    assert.equal(warnings.length, 1, JSON.stringify(notices));
+    assert.ok(warnings[0]?.[1].includes("did not answer"));
+    const call = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
+    assert.equal(call.block, true);
+  });
+
+  it("stays fail-closed with a named APPA_CONFIG", async () => {
+    const dir = workDir();
+    noPolicySetup(dir);
+    process.env.APPA_CONFIG = "/tmp/named-but-broken.toml";
+    const harness = await loadExtension();
+    const notices = enableUiSpy(harness);
+    await startSession(harness);
+    const warnings = notices.filter(([kind]) => kind === "warning");
+    assert.equal(warnings.length, 1, JSON.stringify(notices));
+    assert.ok(warnings[0]?.[1].includes("did not answer"));
+    const call = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
+    assert.equal(call.block, true);
+  });
+
+  it("stays fail-closed when a runtime is already answering", async () => {
+    const dir = workDir();
+    noPolicySetup(dir);
+    const server = createServer((req, res) => {
+      res.end(req.url?.includes("health") ? "ok" : "");
+    });
+    await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready));
+    const address = server.address() as { port: number };
+    process.env.APPA_RUNTIME_URL = `http://127.0.0.1:${address.port}`;
+    try {
+      const harness = await loadExtension();
+      const notices = enableUiSpy(harness);
+      await startSession(harness);
+      const warnings = notices.filter(([kind]) => kind === "warning");
+      assert.equal(warnings.length, 1, JSON.stringify(notices));
+      assert.ok(warnings[0]?.[1].includes("did not answer"));
+      const call = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
+      assert.equal(call.block, true);
+    } finally {
+      server.close();
+    }
   });
 });

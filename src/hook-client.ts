@@ -18,6 +18,8 @@ export interface HookOutcome {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  /** The hook binary itself could not be spawned (ENOENT). */
+  binaryMissing: boolean;
 }
 
 export interface InvokeOptions {
@@ -94,10 +96,11 @@ export async function invokeAppaHook(
           stdout,
           stderr: `${stderr}appa hook timed out after ${timeoutMs}ms`.trim(),
           timedOut: true,
+          binaryMissing: false,
         });
         return;
       }
-      resolve({ exitCode, stdout, stderr, timedOut: false });
+      resolve({ exitCode, stdout, stderr, timedOut: false, binaryMissing: false });
     };
 
     child.on("error", (error) => {
@@ -120,11 +123,13 @@ export async function invokeAppaHook(
 
 function spawnFailure(error: unknown): HookOutcome {
   const detail = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: unknown } | null)?.code;
   return {
     exitCode: -1,
     stdout: "",
     stderr: `appa hook failed to start: ${detail}`,
     timedOut: false,
+    binaryMissing: code === "ENOENT",
   };
 }
 

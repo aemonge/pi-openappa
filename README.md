@@ -14,61 +14,92 @@ pi event ◀── enforce  ◀── decision  ◀─────────�
 
 ## Requirements
 
-- The `appa` binary on `PATH` ([install](https://openappa.com)) — version
-  0.31.x verified; see `docs/wire-notes.md` for the recorded contract
+- The `appa` binary on `PATH`: `curl -fsSL https://openappa.com/install.sh | sh`
+  (the extension installs it automatically when missing) — version 0.31.x
+  verified; see `docs/wire-notes.md` for the recorded contract
 - An APPA runtime listening on loopback (default `127.0.0.1:8787`)
 - A policy (`appa.toml`) that declares the tools your sessions may use
 
 ## Install
 
 ```sh
-pi install npm:pi-openappa        # once published
+pi install npm:pi-openappa        # published on npm; indexed by the Pi gallery
 pi install ./pi-openappa          # from a checkout
 ```
 
+## Smoke test
+
+Ship and verify in one pass:
+
+```sh
+just deploy                        # sync the lockfile, run checks, npm publish
+just remove                        # drop a local-checkout install, if present
+pi install npm:pi-openappa         # install the published package
+pi                                 # any session: protection on, appa auto-installs
+appa --version                     # OK — the runtime is on PATH
+```
+
+`pi install` only registers the package — extension code runs when a session
+starts, so `appa` appears after that first session, not before.
+
 ## Protect sessions
 
-Protection is opt-in, in one of three ways:
+Protection is **on by default**: every Pi session is guarded unless you opt
+out. Opt-outs, most specific first:
 
-- **Project-scoped (recommended):** create `<project>/.pi/openappa` — sessions
-  started in that directory are protected, sessions elsewhere are not. The
-  marker's optional content names that project's policy (absolute or
-  cwd-relative); empty content falls back to `APPA_CONFIG` or APPA's default:
+- **Per launch:** `APPA_GATE=0 pi` (and `APPA_GATE=1 pi` to force it on).
+- **Per project:** create `<project>/.pi/no-openappa` — sessions started in
+  that directory run unguarded.
+- **Globally:** `/appa off` once (marker `~/.config/pi-openappa/off`) — every
+  session everywhere runs unguarded until `/appa on`.
+
+The project marker `<project>/.pi/openappa` names that project's policy
+(absolute or cwd-relative) and re-enables protection even when globally off;
+empty content falls back to `APPA_CONFIG` or APPA's default:
 
   ```sh
   cd your-project && mkdir -p .pi && echo "appa.toml" > .pi/openappa
   ```
 
-- **Built-in:** run `/appa on` once — every Pi session everywhere is
-  protected. `/appa off` disables.
-- **Per launch:** `APPA_GATE=1 pi` (the `clappa`-style launcher route).
-
-A gated session brings the runtime up on its own: `session_start` invokes
+A protected session brings the runtime up on its own: `session_start` invokes
 `appa hook --ensure-runtime`, passing `--config "$APPA_CONFIG"` when set and
 otherwise letting APPA use its own default policy (`~/.config/appa/appa.toml`).
 Protected sessions therefore need zero manual server management. A custom
 `APPA_RUNTIME_URL` names a runtime that is *yours* to start — the hook
 refuses with exactly that reason instead of guessing.
 
-While gated, a runtime that cannot answer blocks the call and the reason is
-returned to the model — **silence never means yes**. If no policy exists the
-startup warning names the exact outs; `/appa off` always works, even with
-every tool call blocked. Ungated sessions never invoke the hook.
+When the default `appa` is missing from `PATH`, a protected session installs
+it itself — once, with a UI notice — by running the same official script
+(`curl -fsSL https://openappa.com/install.sh | sh`), then retries starting
+the runtime. Sessions that name a custom `APPA_HOOK_BIN` are never
+auto-installed.
+
+While protected, a runtime that cannot answer blocks the call and the reason
+is returned to the model — **silence never means yes**; `/appa off` always
+works, even with every tool call blocked. One exception: with **no policy
+anywhere** (`APPA_CONFIG`, marker content, and `~/.config/appa/appa.toml` all
+absent) and no runtime answering, the session runs **unprotected** with one
+startup warning naming the fixes — an unconfigured guard must not lock you
+out of your own machine. A named policy that fails stays fail-closed.
+Opted-out sessions never invoke the hook.
 
 ## Configuration
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `APPA_GATE` | unset | `1` protects this session (read once at launch) |
-| `.pi/openappa` | absent | Project marker: gates sessions started in that directory; optional content = policy path |
+| `APPA_GATE` | unset | `1` forces protection on for this launch; `0` forces it off |
+| `.pi/openappa` | absent | Project marker: names that project's policy and forces protection on |
+| `.pi/no-openappa` | absent | Project opt-out: sessions started there run unguarded |
 | `APPA_RUNTIME_URL` | `http://127.0.0.1:8787` | Runtime endpoint (loopback only) |
 | `APPA_CONFIG` | unset | `appa.toml` the session auto-starts the runtime with |
 | `APPA_HOOK_BIN` | `appa` | Hook binary to invoke |
+| `APPA_INSTALL_CMD` | `curl -fsSL https://openappa.com/install.sh \| sh` | Auto-install command for a missing default `appa` (pin a mirror or offline copy) |
 | `APPA_HOOK_TIMEOUT_MS` | `15000` | Kill the hook after this long; the call is then blocked |
+| `APPA_INSTALL_TIMEOUT_MS` | `120000` | Kill a stuck auto-install after this long |
 
-`/appa` reports protection, always-on state, and runtime health; `/appa on`
-and `/appa off` toggle always-on protection (marker:
-`~/.config/pi-openappa/always-on`), taking effect immediately including the
+`/appa` reports protection, opt-out state, and runtime health; `/appa off`
+disables protection globally (marker `~/.config/pi-openappa/off`) and
+`/appa on` re-enables it, taking effect immediately including the
 current session.
 
 ## Event mapping
@@ -99,7 +130,14 @@ policies declare them verbatim.
 - **Subagents**: spawning is mediated as a plain tool call (deny blocks the
   spawn). Child trajectories are not linked into the parent's label chain
   yet; a gated child Pi process opens its own root trajectory.
-- The adapter never starts a runtime for ungated sessions; auto-start needs
+- **On by default**: installing this extension guards every session and may
+  download and run openappa.com's install script once on first run. The
+  opt-outs above and `APPA_INSTALL_CMD` are the escapes.
+- **Auto-install is `curl \| sh`**: a protected session with the default
+  binary missing downloads and runs the script with user privileges, at most
+  once per session start. Pre-install `appa` or pin `APPA_INSTALL_CMD` to
+  avoid it.
+- The adapter never starts a runtime for opted-out sessions; auto-start needs
   either `APPA_CONFIG` or an installed APPA deployment.
 - OpenAPPA is Preview & RFC: wire surfaces may break without shims. The
   entire wire contract lives in `src/hook-client.ts` and `src/adapter.ts`
