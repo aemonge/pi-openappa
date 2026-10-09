@@ -1,6 +1,6 @@
 {
   "name": "pi-openappa",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Thin OpenAPPA guard extension for Pi: gates tool calls through the APPA runtime. No policy logic lives here.",
   "keywords": [
     "pi-package",
@@ -19,6 +19,13 @@
   "homepage": "https://github.com/aemonge-dev/pi-openappa#readme",
   "bugs": "https://github.com/aemonge-dev/pi-openappa/issues",
   "type": "module",
+  "files": [
+    "extensions/",
+    "src/",
+    "templates/",
+    "traces/",
+    "docs/"
+  ],
   "pi": {
     "extensions": ["./extensions/index.ts"]
   },
