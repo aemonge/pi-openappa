@@ -3,3 +3,4 @@ node_modules/
 .devbox/
 appa.db*
 /tmp/
+graphify-out/

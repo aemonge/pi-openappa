@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { appaDefaultConfigPath, captureGate, readSettings, settingsPath } from "../src/gate.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const MOCK_BIN = join(here, "fixtures", "mock-appa.mjs");
@@ -33,9 +34,18 @@ after(() => {
 
 type Handler = (event: any, ctx: any) => Promise<any>;
 
+interface CompletionItem {
+  value: string;
+  label: string;
+  description?: string;
+}
+
 interface Harness {
   handlers: Map<string, Handler>;
-  commands: Map<string, { handler: Handler }>;
+  commands: Map<string, {
+    handler: Handler;
+    getArgumentCompletions?: (argumentPrefix: string) => CompletionItem[] | null;
+  }>;
   ctx: unknown;
 }
 
@@ -314,6 +324,20 @@ function recordedArgv(dir: string): string[][] {
     .map((line) => JSON.parse(line) as string[]);
 }
 
+/**
+ * Wait until the background hook lane has produced `count` invocations.
+ * session_start no longer awaits the boot hook (fast start), so argv
+ * assertions poll until the enqueued invocation settles.
+ */
+async function waitForArgv(dir: string, count = 1, timeoutMs = 5000): Promise<string[][]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const argvs = recordedArgv(dir);
+    if (argvs.length >= count || Date.now() > deadline) return argvs;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 describe("auto-start on gated session start", () => {
   it("passes --ensure-runtime and --config from APPA_CONFIG", async () => {
     const dir = workDir();
@@ -321,7 +345,7 @@ describe("auto-start on gated session start", () => {
     process.env.APPA_CONFIG = "/tmp/playground/appa.toml";
     const harness = await loadExtension();
     await startSession(harness);
-    const first = recordedArgv(dir)[0];
+    const first = (await waitForArgv(dir))[0];
     assert.ok(first?.includes("--ensure-runtime"), `argv: ${JSON.stringify(first)}`);
     const configIndex = first?.indexOf("--config");
     assert.notEqual(configIndex, -1);
@@ -334,7 +358,7 @@ describe("auto-start on gated session start", () => {
     delete process.env.APPA_CONFIG;
     const harness = await loadExtension();
     await startSession(harness);
-    const first = recordedArgv(dir)[0];
+    const first = (await waitForArgv(dir))[0];
     assert.ok(first?.includes("--ensure-runtime"));
     assert.ok(!first?.includes("--config"));
   });
@@ -367,8 +391,9 @@ describe("auto-install on gated session start (default-on)", () => {
     const harness = await loadExtension();
     const notices = enableUiSpy(harness);
     await startSession(harness);
+    await waitFor(() => existsSync(installed));
+    const first = (await waitForArgv(dir, 1))[0];
     assert.ok(existsSync(installed), "installer ran and placed appa");
-    const first = recordedArgv(dir)[0];
     assert.ok(first?.includes("--ensure-runtime"), `argv: ${JSON.stringify(first)}`);
     assert.ok(!first?.includes("--config"));
     assert.ok(notices.some(([kind]) => kind === "info"), "install notice shown");
@@ -392,6 +417,7 @@ describe("auto-install on gated session start (default-on)", () => {
     const harness = await loadExtension();
     const notices = enableUiSpy(harness);
     await startSession(harness);
+    await waitFor(() => notices.some(([kind]) => kind === "warning"));
     assert.deepEqual(recordedArgv(dir), []);
     assert.deepEqual(recordedLines(dir), []);
     const warnings = notices.filter(([kind]) => kind === "warning");
@@ -414,6 +440,7 @@ describe("auto-install on gated session start (default-on)", () => {
     const harness = await loadExtension();
     const notices = enableUiSpy(harness);
     await startSession(harness);
+    await waitFor(() => notices.some(([kind]) => kind === "warning"));
     assert.deepEqual(recordedArgv(dir), []);
     const warnings = notices.filter(([kind]) => kind === "warning");
     assert.equal(warnings.length, 1, JSON.stringify(notices));
@@ -433,6 +460,7 @@ describe("auto-install on gated session start (default-on)", () => {
     const harness = await loadExtension();
     const notices = enableUiSpy(harness);
     await startSession(harness);
+    await waitFor(() => notices.some(([kind]) => kind === "warning"));
     assert.ok(!existsSync(marker), "installer must not run for custom binaries");
     const warnings = notices.filter(([kind]) => kind === "warning");
     assert.equal(warnings.length, 1, JSON.stringify(notices));
@@ -451,7 +479,7 @@ describe("project-scoped protection (.pi/openappa)", () => {
     writeFileSync(join(proj, ".pi", "openappa"), "appa.toml\n");
     const harness = await loadExtension(proj);
     await startSession(harness);
-    const first = recordedArgv(dir)[0];
+    const first = (await waitForArgv(dir))[0];
     assert.ok(first?.includes("--ensure-runtime"), `argv: ${JSON.stringify(first)}`);
     const index = first?.indexOf("--config");
     assert.notEqual(index, -1);
@@ -470,7 +498,7 @@ describe("project-scoped protection (.pi/openappa)", () => {
     writeFileSync(join(proj, ".pi", "openappa"), "");
     const harness = await loadExtension(proj);
     await startSession(harness);
-    const first = recordedArgv(dir)[0];
+    const first = (await waitForArgv(dir))[0];
     assert.ok(first?.includes("--ensure-runtime"));
     assert.ok(!first?.includes("--config"));
   });
@@ -485,7 +513,7 @@ describe("project-scoped protection (.pi/openappa)", () => {
     writeFileSync(join(proj, ".pi", "openappa"), "appa.toml\n");
     const harness = await loadExtension(proj);
     await startSession(harness);
-    const first = recordedArgv(dir)[0];
+    const first = (await waitForArgv(dir))[0];
     const index = first?.indexOf("--config");
     assert.equal(first?.[Number(index) + 1], "/tmp/env-policy.toml");
   });
@@ -578,6 +606,15 @@ describe("/appa command", () => {
   });
 });
 
+/** Wait until the background start lane settles into `condition`. */
+async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("waitFor: condition not met in time");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 describe("no-policy downgrade (runs unprotected)", () => {
   function noPolicySetup(dir: string): void {
     delete process.env.APPA_GATE;
@@ -603,6 +640,7 @@ describe("no-policy downgrade (runs unprotected)", () => {
     const harness = await loadExtension();
     const notices = enableUiSpy(harness);
     await startSession(harness);
+    await waitFor(() => notices.some(([kind]) => kind === "warning"));
     const warnings = notices.filter(([kind]) => kind === "warning");
     assert.equal(warnings.length, 1, JSON.stringify(notices));
     assert.ok(warnings[0]?.[1].includes("runs unprotected"));
@@ -621,6 +659,7 @@ describe("no-policy downgrade (runs unprotected)", () => {
     const harness = await loadExtension();
     const notices = enableUiSpy(harness);
     await startSession(harness);
+    await waitFor(() => notices.some(([kind]) => kind === "warning"));
     const warnings = notices.filter(([kind]) => kind === "warning");
     assert.equal(warnings.length, 1, JSON.stringify(notices));
     assert.ok(warnings[0]?.[1].includes("did not answer"));
@@ -635,6 +674,7 @@ describe("no-policy downgrade (runs unprotected)", () => {
     const harness = await loadExtension();
     const notices = enableUiSpy(harness);
     await startSession(harness);
+    await waitFor(() => notices.some(([kind]) => kind === "warning"));
     const warnings = notices.filter(([kind]) => kind === "warning");
     assert.equal(warnings.length, 1, JSON.stringify(notices));
     assert.ok(warnings[0]?.[1].includes("did not answer"));
@@ -655,6 +695,7 @@ describe("no-policy downgrade (runs unprotected)", () => {
       const harness = await loadExtension();
       const notices = enableUiSpy(harness);
       await startSession(harness);
+      await waitFor(() => notices.some(([kind]) => kind === "warning"));
       const warnings = notices.filter(([kind]) => kind === "warning");
       assert.equal(warnings.length, 1, JSON.stringify(notices));
       assert.ok(warnings[0]?.[1].includes("did not answer"));
@@ -663,5 +704,188 @@ describe("no-policy downgrade (runs unprotected)", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe("settings file (~/.config/pi-openappa/settings.json)", () => {
+  it("reads known keys and tolerates missing or malformed files", () => {
+    const dir = workDir();
+    process.env.XDG_CONFIG_HOME = join(dir, "xdg");
+    const file = settingsPath(process.env);
+    assert.deepEqual(readSettings(process.env), {});
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, "{not json");
+    assert.deepEqual(readSettings(process.env), {});
+    writeFileSync(
+      file,
+      JSON.stringify({ config: "/tmp/a.toml", runtimeUrl: "http://127.0.0.1:8799", hookTimeoutMs: 1234, hookBin: "appa-test", bogus: 1 }),
+    );
+    const settings = readSettings(process.env);
+    assert.equal(settings.config, "/tmp/a.toml");
+    assert.equal(settings.runtimeUrl, "http://127.0.0.1:8799");
+    assert.equal(settings.hookBin, "appa-test");
+    assert.equal(settings.hookTimeoutMs, 1234);
+  });
+
+  it("env beats settings, project marker beats settings, settings is the fallback", () => {
+    const dir = workDir();
+    process.env.XDG_CONFIG_HOME = join(dir, "xdg");
+    const file = settingsPath(process.env);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ config: "/tmp/from-settings.toml", runtimeUrl: "http://127.0.0.1:8799", hookTimeoutMs: 1234 }));
+
+    process.env.APPA_GATE = "1";
+    delete process.env.APPA_CONFIG;
+    delete process.env.APPA_RUNTIME_URL;
+    const proj = join(dir, "proj");
+
+    let state = captureGate(process.env);
+    assert.equal(state.config, "/tmp/from-settings.toml");
+    assert.equal(state.runtimeUrl, "http://127.0.0.1:8799");
+    assert.equal(state.hookTimeoutMs, 1234);
+
+    process.env.APPA_CONFIG = "/tmp/from-env.toml";
+    state = captureGate(process.env);
+    assert.equal(state.config, "/tmp/from-env.toml");
+    delete process.env.APPA_CONFIG;
+
+    mkdirSync(join(proj, ".pi"), { recursive: true });
+    writeFileSync(join(proj, ".pi", "openappa"), "appa.toml\n");
+    state = captureGate(process.env, proj);
+    assert.equal(state.config, join(proj, "appa.toml"));
+
+    process.env.APPA_RUNTIME_URL = "http://127.0.0.1:8798";
+    state = captureGate(process.env);
+    assert.equal(state.runtimeUrl, "http://127.0.0.1:8798");
+  });
+
+  it("appaDefaultConfigPath lives under the appa config dir", () => {
+    const dir = workDir();
+    process.env.XDG_CONFIG_HOME = join(dir, "xdg");
+    assert.equal(appaDefaultConfigPath(process.env), join(dir, "xdg", "appa", "appa.toml"));
+  });
+});
+
+describe("fast start: the runtime boot stays off the session-start path", () => {
+  it("session_start returns long before a slow boot hook settles", async () => {
+    const dir = workDir();
+    withMock(dir, "sleep");
+    process.env.APPA_HOOK_TIMEOUT_MS = "200";
+    const harness = await loadExtension();
+    const started = Date.now();
+    await startSession(harness);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 900, `session_start blocked for ${elapsed}ms`);
+  });
+
+  it("still serializes SessionStart ahead of the first tool call", async () => {
+    const dir = workDir();
+    withMock(dir, "sleep");
+    process.env.APPA_HOOK_TIMEOUT_MS = "120";
+    const harness = await loadExtension();
+    await startSession(harness);
+    const call = await harness.handlers.get("tool_call")!(bashCall, harness.ctx);
+    assert.equal(call?.block, true); // timed out while booting: fail-closed
+    assert.ok(call?.reason.includes("timed out"));
+    const argvs = recordedArgv(dir);
+    assert.ok(argvs[0]?.includes("--ensure-runtime"), `first argv: ${JSON.stringify(argvs[0])}`);
+    assert.ok((argvs[1] !== undefined) && !argvs[1].includes("--ensure-runtime"));
+  });
+
+  it("a failed boot warns when it settles instead of throwing at start", async () => {
+    const dir = workDir();
+    withMock(dir, "crash");
+    const harness = await loadExtension();
+    const notes: string[] = [];
+    const ctx = {
+      cwd: "/tmp/pi-openappa-test",
+      hasUI: true,
+      sessionManager: { getSessionId: () => SESSION },
+      ui: { notify: (message: string) => notes.push(message) },
+    };
+    await startSessionWithCtx(harness, ctx);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(notes.some((message) => message.includes("did not answer")));
+  });
+});
+
+async function startSessionWithCtx(harness: Harness, ctx: unknown, reason = "startup"): Promise<void> {
+  const handler = harness.handlers.get("session_start");
+  assert.ok(handler, "session_start handler registered");
+  await handler({ type: "session_start", reason }, ctx);
+}
+
+describe("/appa init", () => {
+  function recordingCtx(cwd: string): { ctx: unknown; notes: Array<{ message: string; type?: string | undefined }> } {
+    const notes: Array<{ message: string; type?: string | undefined }> = [];
+    return {
+      ctx: {
+        cwd,
+        hasUI: true,
+        ui: { notify: (message: string, type?: string) => notes.push({ message, type }) },
+      },
+      notes,
+    };
+  }
+
+  it("writes the starter policy and settings, refusing to clobber", async () => {
+    const dir = workDir();
+    process.env.XDG_CONFIG_HOME = join(dir, "xdg");
+    const harness = await loadExtension();
+    const command = harness.commands.get("appa");
+    assert.ok(command);
+    const { ctx, notes } = recordingCtx(join(dir, "proj"));
+    await command.handler("init", ctx);
+    const policy = join(dir, "xdg", "appa", "appa.toml");
+    assert.ok(existsSync(policy), "policy written");
+    const content = readFileSync(policy, "utf8");
+    assert.ok(content.includes("version = 2"));
+    assert.ok(content.includes("host/claude-code/Bash(command:*.env*)"));
+    assert.ok(content.includes("Edit(path:*.md)"), "docs landing zone present");
+    assert.ok(content.includes("Write(path:*Makefile*)"), "devops fence present");
+    const settingsFile = join(dir, "xdg", "pi-openappa", "settings.json");
+    assert.ok(existsSync(settingsFile), "settings written");
+    assert.equal(JSON.parse(readFileSync(settingsFile, "utf8")).config, policy);
+
+    writeFileSync(policy, "sentinel");
+    await command.handler("init", ctx);
+    assert.equal(readFileSync(policy, "utf8"), "sentinel", "refuses without --force");
+    assert.ok(notes.some((note) => note.message.includes("--force")));
+
+    await command.handler("init --force", ctx);
+    assert.ok(readFileSync(policy, "utf8").includes("version = 2"));
+  });
+
+  it("init project writes appa.toml plus the .pi/openappa marker", async () => {
+    const dir = workDir();
+    const proj = join(dir, "proj");
+    mkdirSync(proj, { recursive: true });
+    const harness = await loadExtension();
+    const command = harness.commands.get("appa");
+    assert.ok(command);
+    const { ctx } = recordingCtx(proj);
+    await command.handler("init project", ctx);
+    assert.ok(existsSync(join(proj, "appa.toml")));
+    assert.equal(readFileSync(join(proj, ".pi", "openappa"), "utf8"), "appa.toml\n");
+    writeFileSync(join(proj, "appa.toml"), "sentinel");
+    await command.handler("init project", ctx);
+    assert.equal(readFileSync(join(proj, "appa.toml"), "utf8"), "sentinel", "refuses without --force");
+    await command.handler("init project --force", ctx);
+    assert.ok(readFileSync(join(proj, "appa.toml"), "utf8").includes("version = 2"));
+  });
+});
+
+describe("/appa argument completion", () => {
+  it("completes subcommands by prefix", async () => {
+    const harness = await loadExtension();
+    const command = harness.commands.get("appa");
+    assert.ok(command);
+    const complete = command.getArgumentCompletions;
+    assert.ok(complete, "getArgumentCompletions registered");
+    const values = (prefix: string) => complete(prefix)?.map((item) => item.value);
+    assert.deepEqual(values("o"), ["on", "off"]);
+    assert.deepEqual(values("init p"), ["init project"]);
+    assert.deepEqual(values(""), ["on", "off", "init", "init project", "status"]);
+    assert.equal(complete("zzz"), null);
   });
 });

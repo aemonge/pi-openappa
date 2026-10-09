@@ -1,0 +1,31 @@
+# Day A — the coding loop. No web, no secrets: every fence stays open.
+# Read, edit existing code, run tests, commit (local), create a file.
+host/claude-code/Read {
+  path: "src/adapter.ts"
+}
+expect allow
+
+host/claude-code/Edit {
+  path: "src/adapter.ts"
+}
+expect allow
+
+host/claude-code/Bash {
+  command: "npm test"
+}
+expect allow
+
+host/claude-code/Bash {
+  command: "git commit -m 'fix: adapter mapping'"
+}
+expect allow
+
+host/claude-code/Bash {
+  command: "git push"
+}
+expect allow
+
+host/claude-code/Write {
+  path: "src/new-module.ts"
+}
+expect allow

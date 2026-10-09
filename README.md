@@ -18,7 +18,8 @@ pi event ◀── enforce  ◀── decision  ◀─────────�
   (the extension installs it automatically when missing) — version 0.31.x
   verified; see `docs/wire-notes.md` for the recorded contract
 - An APPA runtime listening on loopback (default `127.0.0.1:8787`)
-- A policy (`appa.toml`) that declares the tools your sessions may use
+- A policy (`appa.toml`) that declares the tools your sessions may use —
+  `/appa init` writes a starter one, or copy `templates/appa.toml`
 
 ## Install
 
@@ -61,10 +62,14 @@ empty content falls back to `APPA_CONFIG` or APPA's default:
   cd your-project && mkdir -p .pi && echo "appa.toml" > .pi/openappa
   ```
 
-A protected session brings the runtime up on its own: `session_start` invokes
-`appa hook --ensure-runtime`, passing `--config "$APPA_CONFIG"` when set and
-otherwise letting APPA use its own default policy (`~/.config/appa/appa.toml`).
-Protected sessions therefore need zero manual server management. A custom
+A protected session brings the runtime up on its own: `session_start` sends
+`appa hook --ensure-runtime` (passing `--config` when a policy is resolved),
+but **does not wait for it** — the boot runs on a serialized background lane,
+so a cold runtime, a first-run auto-install, or a slow start never sits in
+Pi's session-start path. Ordering is preserved: the SessionStart payload
+always lands before the first `PreToolUse`, and a runtime that cannot
+answer fails that first call closed with the reason (silence never means
+yes). A custom
 `APPA_RUNTIME_URL` names a runtime that is *yours* to start — the hook
 refuses with exactly that reason instead of guessing.
 
@@ -85,17 +90,70 @@ Opted-out sessions never invoke the hook.
 
 ## Configuration
 
-| Variable | Default | Meaning |
+| Source | Default | Meaning |
 |---|---|---|
 | `APPA_GATE` | unset | `1` forces protection on for this launch; `0` forces it off |
 | `.pi/openappa` | absent | Project marker: names that project's policy and forces protection on |
 | `.pi/no-openappa` | absent | Project opt-out: sessions started there run unguarded |
+| `~/.config/pi-openappa/settings.json` | absent | File settings: `config`, `runtimeUrl`, `hookBin`, `hookTimeoutMs`; env always wins, project markers beat `config` |
 | `APPA_RUNTIME_URL` | `http://127.0.0.1:8787` | Runtime endpoint (loopback only) |
 | `APPA_CONFIG` | unset | `appa.toml` the session auto-starts the runtime with |
 | `APPA_HOOK_BIN` | `appa` | Hook binary to invoke |
 | `APPA_INSTALL_CMD` | `curl -fsSL https://openappa.com/install.sh \| sh` | Auto-install command for a missing default `appa` (pin a mirror or offline copy) |
 | `APPA_HOOK_TIMEOUT_MS` | `15000` | Kill the hook after this long; the call is then blocked |
 | `APPA_INSTALL_TIMEOUT_MS` | `120000` | Kill a stuck auto-install after this long |
+
+Policy resolution order: `APPA_CONFIG`, then the project marker's content,
+then `settings.json`'s `config`, then APPA's own default
+(`~/.config/appa/appa.toml`).
+
+## Starter policy: `/appa init`
+
+`templates/appa.toml` is a complete, self-contained policy written for Pi.
+It gates **flows, not tools**: sources mark data, sinks check it.
+
+| When a session carries… | it is refused at… |
+|---|---|
+| web text (`curl`/`wget`, `web_explore`, context7) | editing any existing file except docs/openspec/`*.md` (research lands in docs, it doesn't rewrite code); writing tests, devops (Makefile, justfile, scripts, CI, Dockerfile), infra (terraform, k8s, helm…), or credential-shaped paths; `git push` / `gh …`; `mem_save`/`mem_update` (poisoned memory must not persist) |
+| `.env`/credentials (read or commanded) | web tools (a secret-narrowed session cannot prove a query shareable) — trusted docs domains carved out for `curl`; bash output returns masked via `redact-secrets` |
+| anything | editing appa's own policy files |
+| nothing (clean session) | nowhere — reads, edits, tests, commits, pushes all flow |
+
+An undeclared tool is refused before it runs (deny-by-default; a `*`
+wildcard requires an annotator, so refusing is the only annotator-free
+stance — the commented `builtin = "llm"` block shows the classifier
+upgrade). Selectors use **Pi argument names** (`Read(path:…)`, not Claude
+Code's `file_path` — the stock battery's never match a Pi call), and the
+policy is **static rules only**: nothing host-coupled, nothing that can be
+unreachable. Taint lives in the trajectory label and only narrows — the
+manual reset is a **new session** (resume/fork inherit it; there is no
+`/untaint` by design).
+
+Install it one of three ways:
+
+```sh
+/appa init               # inside Pi: writes ~/.config/appa/appa.toml (+ settings.json)
+/appa init project       # writes ./appa.toml and the .pi/openappa marker
+cp templates/appa.toml ~/.config/appa/appa.toml   # from a checkout
+```
+
+`init` never clobbers: rerun with `--force` to overwrite. Subcommands
+autocomplete (`on`, `off`, `init`, `init project`, `status`).
+
+### Policy-as-code
+
+The policy is tested like code — no runtime needed, only the `appa` CLI:
+
+```sh
+just policy-check      # templates/appa.toml loads
+just policy-coverage   # every known Pi tool declared (Day E: refusals fail)
+just policy-test       # replay the usage-day traces (Days A–D, F)
+```
+
+`traces/*.appa` are line-based replays (`<canonical-tool> {` / one `arg:`
+JSON value per line / `}` / `expect allow|withhold|deny`); calls in one
+file share a trajectory, so taint accumulates exactly as live. All three
+gates run in `just check`.
 
 `/appa` reports protection, opt-out state, and runtime health; `/appa off`
 disables protection globally (marker `~/.config/pi-openappa/off`) and

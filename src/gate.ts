@@ -10,7 +10,8 @@
  * Otherwise the session is protected (the default).
  *
  * An explicit APPA_CONFIG always wins as the policy source; otherwise a
- * project marker's content is used; otherwise APPA's own default. The gate is
+ * project marker's content is used; otherwise the settings file's `config`;
+ * otherwise APPA's own default. The gate is
  * captured once per session so a session cannot disable its own protection
  * mid-run; `/appa on|off` are deliberate user commands and do re-resolve.
  * The legacy `always-on` marker from opt-in days is ignored; `/appa on`
@@ -37,6 +38,55 @@ export function globalOffMarkerPath(env: NodeJS.ProcessEnv): string {
 /** Legacy opt-in marker from before default-on; ignored, cleared by `/appa on`. */
 export function legacyAlwaysOnMarkerPath(env: NodeJS.ProcessEnv): string {
   return join(baseConfigDir(env), "pi-openappa", "always-on");
+}
+
+/** The policy a gated session auto-starts the runtime with, by APPA default. */
+export function appaDefaultConfigPath(env: NodeJS.ProcessEnv): string {
+  return join(baseConfigDir(env), "appa", "appa.toml");
+}
+
+/** File-backed settings for this extension (see `ExtensionSettings`). */
+export function settingsPath(env: NodeJS.ProcessEnv): string {
+  return join(baseConfigDir(env), "pi-openappa", "settings.json");
+}
+
+/**
+ * Keys read from `settings.json`. Every key is optional; environment
+ * variables of the same meaning always win over the file, and the file
+ * always wins over the built-in defaults. Written by `/appa init`.
+ */
+export interface ExtensionSettings {
+  /** Policy path passed as `--config` (the APPA_CONFIG fallback). */
+  config?: string;
+  /** Runtime endpoint (the APPA_RUNTIME_URL fallback). */
+  runtimeUrl?: string;
+  /** Hook binary (the APPA_HOOK_BIN fallback). */
+  hookBin?: string;
+  /** Hook timeout in ms (the APPA_HOOK_TIMEOUT_MS fallback). */
+  hookTimeoutMs?: number;
+}
+
+/** Read settings.json; a missing or malformed file resolves to `{}`. */
+export function readSettings(env: NodeJS.ProcessEnv): ExtensionSettings {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(settingsPath(env), "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+    const out: ExtensionSettings = {};
+    const record = parsed as Record<string, unknown>;
+    for (const key of ["config", "runtimeUrl", "hookBin"] as const) {
+      const value = record[key];
+      if (typeof value === "string" && value !== "") out[key] = value;
+    }
+    const timeout = record["hookTimeoutMs"];
+    if (typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0) {
+      out.hookTimeoutMs = timeout;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 export function projectMarkerPath(cwd: string): string {
@@ -88,12 +138,14 @@ export interface GateState {
   gated: boolean;
   /** Most specific reason this session is (or is not) protected. */
   source: GateSource;
-  /** Policy for auto-start: explicit env wins, then project marker content. */
+  /** Policy for auto-start: env, then project marker, then settings file. */
   config?: string;
   /** Runtime URL for health reporting (the hook binary reads it from env). */
   runtimeUrl: string;
   /** Hook binary used for reporting. */
   hookBin: string;
+  /** Hook timeout in ms when settings pin one; otherwise the default applies. */
+  hookTimeoutMs?: number;
 }
 
 /** Read a project marker's optional policy path; empty content resolves to none. */
@@ -108,9 +160,11 @@ function projectConfig(cwd: string): string | undefined {
 }
 
 export function captureGate(env: NodeJS.ProcessEnv, cwd?: string): GateState {
+  const settings = readSettings(env);
   const base = {
-    runtimeUrl: env.APPA_RUNTIME_URL ?? DEFAULT_RUNTIME_URL,
-    hookBin: env.APPA_HOOK_BIN ?? "appa",
+    runtimeUrl: env.APPA_RUNTIME_URL ?? settings.runtimeUrl ?? DEFAULT_RUNTIME_URL,
+    hookBin: env.APPA_HOOK_BIN ?? settings.hookBin ?? "appa",
+    ...(settings.hookTimeoutMs !== undefined ? { hookTimeoutMs: settings.hookTimeoutMs } : {}),
   };
   const explicitConfig =
     env.APPA_CONFIG !== undefined && env.APPA_CONFIG !== ""
@@ -120,10 +174,12 @@ export function captureGate(env: NodeJS.ProcessEnv, cwd?: string): GateState {
   const projectOff = cwd !== undefined && existsSync(projectNoMarkerPath(cwd));
   const projectCfg =
     projectGated && cwd !== undefined ? projectConfig(cwd) : undefined;
+  // Precedence: launch env, then the project marker (per-project intent),
+  // then the global settings file (see readSettings).
+  const config = explicitConfig ?? projectCfg ?? settings.config;
 
   // An explicit launch choice beats every marker.
   if (env.APPA_GATE === "1") {
-    const config = explicitConfig ?? projectCfg;
     return {
       gated: true,
       source: "env-on",
@@ -139,7 +195,6 @@ export function captureGate(env: NodeJS.ProcessEnv, cwd?: string): GateState {
     return { gated: false, source: "project-off", ...base };
   }
   if (projectGated) {
-    const config = explicitConfig ?? projectCfg;
     return {
       gated: true,
       source: "project",
@@ -155,7 +210,7 @@ export function captureGate(env: NodeJS.ProcessEnv, cwd?: string): GateState {
     gated: true,
     source: "default",
     ...base,
-    ...(explicitConfig !== undefined ? { config: explicitConfig } : {}),
+    ...(config !== undefined ? { config } : {}),
   };
 }
 

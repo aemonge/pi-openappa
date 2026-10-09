@@ -1,0 +1,21 @@
+# Day C — push day, after research. The tainted trajectory may not ship
+# data off the machine: push and gh are refused; a clean trajectory pushes.
+host/claude-code/Bash {
+  command: "curl -s https://someblog.dev/example"
+}
+expect allow
+
+host/claude-code/Bash {
+  command: "git push"
+}
+expect deny
+
+host/claude-code/Bash {
+  command: "git -C sub push"
+}
+expect deny
+
+host/claude-code/Bash {
+  command: "gh pr create --title 'x'"
+}
+expect deny

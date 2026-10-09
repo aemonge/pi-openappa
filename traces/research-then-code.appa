@@ -1,0 +1,53 @@
+# Day B — research-then-code. The curl'd blog post taints the trajectory:
+# creating files and editing docs still works; editing existing code,
+# tests, and .env does not.
+host/claude-code/Bash {
+  command: "curl -s https://someblog.dev/pnpm-defaults"
+}
+expect allow
+
+# Research may create new files…
+host/claude-code/Write {
+  path: "notes/pnpm-findings.md"
+}
+expect allow
+
+# …and edit documentation (the landing zone)…
+host/claude-code/Edit {
+  path: "docs/pnpm.md"
+}
+expect allow
+
+host/claude-code/Edit {
+  path: "README.md"
+}
+expect allow
+
+# …but never existing code…
+host/claude-code/Edit {
+  path: "src/adapter.ts"
+}
+expect deny
+
+# …nor tests…
+host/claude-code/Edit {
+  path: "test/extension.test.ts"
+}
+expect deny
+
+host/claude-code/Write {
+  path: "test/new-test.test.ts"
+}
+expect deny
+
+# …nor devops files…
+host/claude-code/Write {
+  path: "scripts/deploy.sh"
+}
+expect deny
+
+# …nor secrets.
+host/claude-code/Edit {
+  path: ".env"
+}
+expect deny

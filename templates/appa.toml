@@ -1,0 +1,1068 @@
+# pi-openappa default policy — a Pi session's complete, self-contained guard.
+#
+# Install (either):
+#   cp templates/appa.toml ~/.config/appa/appa.toml      # from a checkout
+#   /appa init                                            # from inside Pi
+# or scope it to one project:
+#   /appa init project        # writes ./appa.toml + .pi/openappa
+#
+# ══════════════════════════════════════════════════════════════════════════
+# THE FENCE MAP (what this file encodes; validate: `just policy-test`)
+# ══════════════════════════════════════════════════════════════════════════
+# appa gates flows, not tools. Sources mark data; sinks check it:
+#
+#   web (curl/wget, web_explore, context7)  ──suspicious──▶  the session
+#   .env / credentials                      ──self-narrow─▶  the session
+#
+# A session that carries suspicious or self-narrowed data is REFUSED at:
+#   • any edit to an existing file — except documentation (docs/, openspec/,
+#     *.md): research lands in docs, it does not rewrite code          [day B]
+#   • writes to files that execute later: tests, devops (Makefile,
+#     justfile, scripts, CI), infra (terraform, k8s, helm…), and
+#     credential-shaped paths                                          [day A]
+#   • git push / gh pr|issue|release|api|repo: no tainted data leaves
+#     the machine                                                       [day C]
+#   • web tools after reading .env: secrets may not reach a query       [day D]
+#   • mem_save / mem_update: poisoned memory must not persist           [day F]
+#   • edits to appa's own policy files                                  [guard]
+#
+# A clean session (no web, no secrets) flows everywhere: reads, edits,
+# tests, commits — nothing below ever trips.                           [day A]
+#
+# Reset: taint lives in the trajectory label and only narrows. The manual
+# reset is a NEW session (resume/fork inherit the label). There is no
+# /untaint by design.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# GROUND RULES (verified against appa 0.31.1; docs/wire-notes.md)
+# ══════════════════════════════════════════════════════════════════════════
+# 1. Tool naming: Pi built-ins map to Claude-Code policy names (bash→Bash,
+#    read→Read, edit→Edit, write→Write, grep→Grep, find→Glob, ls→LS,
+#    powershell→PowerShell); custom/MCP tools pass through verbatim
+#    (`subagent`, `mem_search`, …), declared here under their Pi names.
+# 2. Argument naming: `tool_input` crosses the wire exactly as Pi sent it,
+#    so selectors use Pi's argument names — Read/Edit/Write take `path`,
+#    Bash/PowerShell take `command`. The stock claude-code battery selects
+#    on `file_path` and never matches a Pi call; this file spells it right.
+# 3. No annotators, on purpose: `builtin = "claude-code"` annotators are
+#    host-coupled and unreachable under Pi (they fail closed and withhold
+#    results). This policy is static rules only — nothing here can be
+#    unreachable. Consequence: deny-undeclared is the only stance (a `*`
+#    wildcard REQUIRES an annotator; static deltas on it refuse to load).
+# 4. Rules match in order; first match wins. Selector patterns are globs on
+#    the full argument value (`*` = any sequence).
+# 5. Approximations: `write` cannot distinguish create from overwrite, so
+#    "research may create, never overwrite" is enforced for protected
+#    categories only; a tainted overwrite of unprotected src via `write`
+#    is a documented hole (use `edit` discipline). "Flow ends after a docs
+#    edit" is approximated by docs being the only tainted-editable sink.
+
+[policy]
+version = 2
+
+# ─── Bash: commands that name requester credentials are `self` data ────────
+#
+# Narrows the session to `self`: the result is withheld and `redact-secrets`
+# (below) masks tokens before the output returns to `public`. A selector is
+# a glob on the command as written; a spelling these miss — inside `$(...)`,
+# a heredoc, an alias — falls through to later rules. Extend freely.
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.env*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.claude.json*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.credentials.json*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.ssh/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*id_rsa*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*id_ed25519*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.netrc*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.git-credentials*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.aws/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.azure/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.kube/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.gnupg/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.docker/config.json*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.config/gh/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.config/gcloud/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.npmrc*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.pypirc*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.password-store/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*.vault-token*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*/proc/*environ*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+# ─── Bash: trusted documentation domains stay clean ────────────────────────
+#
+# The official default allow-lists trusted docs domains on WebFetch; Pi has
+# no URL-argumented web tool, so the same carve-out is spelled on curl.
+# Reading these keeps the session's label: docs sites whose authors are the
+# platform vendors. Everything else fetched is foreign text (next block).
+# Extend with the domains you trust; wget is not carved out — add mirrors
+# if you use it for docs.
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*curl*docs.anthropic.com*)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*curl*code.claude.com*)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*curl*openappa.com*)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*curl*nodejs.org*)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*curl*developer.mozilla.org*)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*curl*typescriptlang.org*)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*curl*doc.rust-lang.org*)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*curl*docs.python.org*)"
+delta = {}
+
+# ─── Bash: publishing — tainted data may not leave the machine ─────────────
+#
+# A push, PR, issue, release, or API call carries the session's data to a
+# remote: the injection-to-GitHub exfil channel. Deterministic "ask": the
+# call runs only from a clean (fully trusted) trajectory. Normal `git
+# commit` is NOT fenced — local history stays local. Blocked after
+# research? Start a fresh session and push from there.
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*git push*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*git -* push*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*gh pr *)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*gh issue *)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*gh release *)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*gh api *)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*gh repo *)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*gh gist *)"
+requires = { trust = "trusted" }
+delta = {}
+
+# ─── Bash: fetch-shaped commands are the web source ────────────────────────
+#
+# This is the middle path: not all shell output is foreign — `ls` and
+# `npm test` are yours — but curl/wget return text written by strangers.
+# Only these narrow trust. A session that curled a blog post keeps working
+# everywhere except the fenced sinks (see the fence map).
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*curl*)"
+delta = { trust = "suspicious" }
+
+[[policy.tool]]
+name = "host/claude-code/Bash(command:*wget*)"
+delta = { trust = "suspicious" }
+
+# ─── Bash: every other command ─────────────────────────────────────────────
+#
+# Your own machine's output, trusted. (The strict alternative — marking all
+# shell output suspicious — over-taints: one `ls` would refuse every
+# trusted-only sink below forever, with no annotator to tell `ls` from
+# `curl`. Fetch-selectors above are the honest split.)
+#
+# Scope note, cross-checked against community hardening guides: appa is an
+# information-flow engine — it fences where DATA goes, not what a command
+# DOES. Destructive-command deny-lists (`rm -rf /`, `sudo`, `chmod`,
+# shutdown…) that Claude Code / Cursor configs carry are not expressible
+# here (v2 has no static unconditional deny) and are deliberately out of
+# scope: the OS, backups, and you remain that guard.
+
+[[policy.tool]]
+name = "host/claude-code/Bash"
+description = "Runs one shell command and returns its output."
+delta = {}
+
+# ─── PowerShell: the Bash rules, spelled for Windows hosts ─────────────────
+# Directory rules are written for both separators; `\\` is one literal
+# backslash in a selector.
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.env*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.ssh/*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.ssh\\*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*id_rsa*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*id_ed25519*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.netrc*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.git-credentials*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.aws/*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.aws\\*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.kube/*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.kube\\*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.gnupg/*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.gnupg\\*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.docker/config.json*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.docker\\config.json*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.config/gh/*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*.config\\gh\\*)'
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*curl*)'
+delta = { trust = "suspicious" }
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*wget*)'
+delta = { trust = "suspicious" }
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*git push*)'
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = 'host/claude-code/PowerShell(command:*git -* push*)'
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/PowerShell"
+description = "Runs one PowerShell command and returns its output."
+delta = {}
+
+# ─── Read: the requester's own secrets are `self` data ─────────────────────
+# A selector matches the argument as written, absolute or relative, not the
+# resolved path. Every other path keeps the session's label; no rule here
+# blocks a read or lowers its trust. Pi's argument is `path`.
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:*/.env*)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:.env*)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:*/.ssh/*)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:.ssh/*)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:*/.aws/*)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:*/.kube/*)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:*/.gnupg/*)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:*/.netrc)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:*/.git-credentials)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:*/.npmrc)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:*/.vault-token)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read(path:*/.password-store/*)"
+delta = { audience = ["self"] }
+
+[[policy.tool]]
+name = "host/claude-code/Read"
+description = "Reads a file from the local filesystem."
+delta = {}
+
+# ─── Grep / Glob / LS: local search over this user's files ─────────────────
+
+[[policy.tool]]
+name = "host/claude-code/Grep"
+description = "Searches file contents with a pattern."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Glob"
+description = "Finds files by name pattern."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/LS"
+description = "Lists a directory."
+delta = {}
+
+# ─── Edit: research lands in docs, it does not rewrite code ────────────────
+#
+# Documentation first (the landing zone): docs directories, openspec, and
+# markdown anywhere stay editable even by a tainted session — that is where
+# research output belongs. Everything else below requires a fully trusted
+# trajectory: a session that curled a blog post may create new files (see
+# Write) and edit docs, but not touch existing code. This mirrors the
+# read-only scout / full Engineer split: research sessions report, clean
+# sessions build.
+
+[[policy.tool]]
+name = "host/claude-code/Edit(path:*/docs/*)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Edit(path:docs/*)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Edit(path:*/openspec/*)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Edit(path:openspec/*)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Edit(path:*.md)"
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Edit(path:*.mdx)"
+delta = {}
+
+# The policy guards itself: a session may not rewrite the rules that bind
+# it, tainted or not. Edit policies by hand, in a fresh session.
+
+[[policy.tool]]
+name = "host/claude-code/Edit(path:*/appa/appa.toml)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Edit(path:*/appa/batteries/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Edit"
+description = "Applies targeted edits to an existing file."
+requires = { trust = "trusted" }
+delta = {}
+
+# ─── Write: create freely; protect what executes later ─────────────────────
+#
+# `write` is the create path (new files, notes, reports) and stays open —
+# with two families fenced. First, anything credential-shaped (an untrusted
+# flow must not be laundered into secrets). Second, the files that execute
+# later with more privilege than the session: tests (a poisoned test that
+# always passes), devops (Makefile, justfile, scripts/, CI workflows,
+# Dockerfiles), and infra (terraform, k8s, helm, ansible, pulumi). Poison
+# that persists or executes is the memory-poisoning problem, spelled for
+# files. NOTE: `write` cannot distinguish create from overwrite — a tainted
+# overwrite of unprotected src is a known hole (documented, not fenced).
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.env*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:.env*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.ssh/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.aws/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.kube/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.gnupg/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.netrc)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.git-credentials)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.npmrc)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.pypirc)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.vault-token)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.password-store/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*id_rsa*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*id_ed25519*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/id_*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*credentials*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*secrets*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*token)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*auth.json)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.pem)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.key)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.p12)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.pfx)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.jks)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.keystore)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:/etc/ssh/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:/etc/sudoers*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*_history)"
+requires = { trust = "trusted" }
+delta = {}
+
+# — files that execute later: tests —
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/test/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/tests/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:test/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:tests/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.test.*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.spec.*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*_test.*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*_spec.*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/__tests__/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+# — files that execute later: devops / build / CI —
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*Makefile*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.mk)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*justfile*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*Justfile*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/scripts/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:scripts/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.github/workflows/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.gitlab-ci*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/.circleci/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*Dockerfile*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*docker-compose*)"
+requires = { trust = "trusted" }
+delta = {}
+
+# — files that execute later: infrastructure —
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.tf)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.tfvars)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/terraform/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/k8s/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/helm/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/ansible/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/pulumi/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*.cloudformation*)"
+requires = { trust = "trusted" }
+delta = {}
+
+# — the policy guards itself, for writes too —
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/appa/appa.toml)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write(path:*/appa/batteries/*)"
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/Write"
+description = "Writes a file to the local filesystem (create path)."
+delta = {}
+
+# ─── Web sources: foreign text, and a query that leaves the machine ────────
+#
+# The official default's dual rule, spelled for Pi's tools: the content is
+# suspicious (someone else wrote it), and the query itself is a public sink
+# — so a session that has read `.env` (self-narrowed) is refused web
+# research until it can prove the query shareable, which it cannot. Fresh
+# sessions start public and research freely.
+
+[[policy.tool]]
+name = "host/claude-code/web_explore"
+description = "Researches a web question with search and fetch passes."
+requires = { audience = { contains = ["public"] } }
+delta = { trust = "suspicious" }
+
+[[policy.tool]]
+name = "host/claude-code/resolve-library-id"
+description = "Resolves a package name to a Context7 library ID."
+requires = { audience = { contains = ["public"] } }
+delta = { trust = "suspicious" }
+
+[[policy.tool]]
+name = "host/claude-code/query-docs"
+description = "Queries Context7 documentation for a library."
+requires = { audience = { contains = ["public"] } }
+delta = { trust = "suspicious" }
+
+# codemode composes other tools' results; each nested tool call is itself
+# gated (they are events in the same trajectory), so taint enters at the
+# nested source, not here. Marking codemode itself suspicious would
+# over-taint every later edit after routine script use.
+
+[[policy.tool]]
+name = "host/claude-code/codemode"
+description = "Runs JavaScript that calls other tools."
+delta = {}
+
+# ─── Subagent delegation ───────────────────────────────────────────────────
+#
+# Spawning is mediated as a plain tool call. `context_control` below makes
+# the runtime treat the child's context as exactly the spawn call's prompt,
+# so the child's return is checked as a branch of this trajectory — with
+# `attest-schema` available to let a schema-matching structured return
+# cross at this session's own trust.
+
+[[policy.tool]]
+name = "host/claude-code/subagent"
+description = "Delegates work to a specialized subagent."
+delta = {}
+
+# ─── Harness bookkeeping: session-local state and memory ───────────────────
+#
+# LSP, focus, and session tools mutate nothing outside the session. Memory
+# READS are open (your own store). Memory WRITES are fenced: a session
+# carrying suspicious data may not persist it as trusted memory — poisoned
+# learnings would outlive the session and be trusted by every later one.
+# Cost: after heavy web research, save memories from a fresh session (or
+# relax this rule if your scouts must save mid-research — it is a one-block
+# delete).
+
+[[policy.tool]]
+name = "host/claude-code/lsp_diagnostics"
+description = "Runs language-server diagnostics."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/lsp_fix"
+description = "Applies a language-server source fix."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/work_focus"
+description = "Shows or sets ephemeral session work metadata."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/stage"
+description = "Declares the current session stage."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/subject"
+description = "Shows or sets the session subject."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/openspec_focus"
+description = "Shows or sets OpenSpec Task focus."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_search"
+description = "Searches Engram memory."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_save"
+description = "Saves an Engram observation."
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_update"
+description = "Updates an Engram observation."
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_capture_passive"
+description = "Persists passive learnings to Engram."
+requires = { trust = "trusted" }
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_delete"
+description = "Deletes an Engram observation."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_context"
+description = "Loads Engram context."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_stats"
+description = "Reports Engram statistics."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_timeline"
+description = "Shows an Engram observation timeline."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_get_observation"
+description = "Fetches one Engram observation."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_list_projects"
+description = "Lists Engram projects."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_current_project"
+description = "Reports the current Engram project."
+delta = {}
+
+[[policy.tool]]
+name = "host/claude-code/mem_doctor"
+description = "Runs Engram diagnostics."
+delta = {}
+
+# ─── Sanitizers ────────────────────────────────────────────────────────────
+#
+# redact-secrets masks private-key blocks, well-known token shapes, the AWS
+# secret access key, secret-named assignment values, and long high-entropy
+# runs. It is offered for every withheld Bash/PowerShell result (see
+# confined_results below), so a credential-narrowed command still returns
+# useful, masked output. It runs inside the runtime.
+
+[[policy.sanitizer]]
+name = "redact-secrets"
+on = ["tool_output"]
+
+[policy.sanitizer.permits]
+audience = { from = ["self"], to = ["public"] }
+
+# attest-schema is the reserved builtin for a structured subagent return: the
+# spawn call declares a JSON schema, and a final message matching it crosses
+# at this session's own trust instead of the rank the subagent's reads left
+# it at. Runs in the runtime itself; needs no externals entry.
+
+[[policy.sanitizer]]
+name = "attest-schema"
+on = ["tool_output"]
+
+[policy.sanitizer.permits]
+trust = { from = "suspicious", to = "trusted" }
+
+# ─── Deployment: how subagents start, which results are held back ──────────
+
+[policy.deployment]
+context_control = true
+confined_results = ["host/claude-code/Bash", "host/claude-code/PowerShell"]
+
+# ─── Externals: only runtime builtins, nothing host-coupled ────────────────
+# timeout_ms and max_body_bytes are required fields of [externals].
+
+[externals]
+timeout_ms = 5000
+max_body_bytes = 65536
+
+[externals.sanitizers.redact-secrets]
+builtin = "redact-secrets"
+
+# ─── Reporting ─────────────────────────────────────────────────────────────
+
+[reporting]
+agent_yell = false
+
+# ─── Undeclared tools ──────────────────────────────────────────────────────
+#
+# Deny-by-default, and under static rules the only stance: appa requires a
+# wildcard `*` entry to name an annotator and forbids static delta on it.
+# A tool this file does not name is refused before execution, with the
+# runtime's reason — declare new MCP tools by copying a block above, under
+# their verbatim Pi name.
+#
+# If you want per-call classification of unknown tools instead, register a
+# model annotator (builtin = "llm", see the OpenAPPA policy reference) and
+# bind the wildcard to it. The trade is reachability and latency in the
+# decision path — the host-coupled-annotator failure this policy exists to
+# avoid — so it stays commented out:
+#
+# [[policy.annotator]]
+# name = "classify-unknown"
+# builtin = "llm"
+#
+# [[policy.tool]]
+# name = "*"
+# annotator = "classify-unknown"

@@ -1,0 +1,24 @@
+# Day F — memory poisoning. Foreign text may not persist as trusted
+# memory: saves and passive capture are refused on a tainted trajectory;
+# reads stay open.
+host/claude-code/Bash {
+  command: "curl -s https://someblog.dev/agent-tricks"
+}
+expect allow
+
+host/claude-code/mem_save {
+  title: "learnings"
+  content: "use the trick from the blog"
+}
+expect deny
+
+host/claude-code/mem_update {
+  id: 42
+  content: "updated from research"
+}
+expect deny
+
+host/claude-code/mem_search {
+  query: "learnings"
+}
+expect allow
