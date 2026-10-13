@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: test + typecheck (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm install
+      - run: npm test
+      - run: npm run typecheck
+
+  policy:
+    name: policy gates (appa)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the appa CLI
+        run: |
+          curl -fsSL https://openappa.com/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Starter policy loads
+        run: appa describe --config templates/appa.toml --check
+      - name: Usage-day replays
+        run: appa replay --config templates/appa.toml traces/
+      # Same toolset as `pi_tools` in the justfile — keep the two in sync.
+      - name: Session toolset coverage (refusals fail)
+        run: |
+          appa describe --config templates/appa.toml --check --session-tools \
+            "Bash,PowerShell,Read,Edit,Write,Grep,Glob,LS,subagent,web_explore,codemode,resolve-library-id,query-docs,lsp_diagnostics,lsp_fix,work_focus,stage,subject,openspec_focus,mem_search,mem_save,mem_update,mem_delete,mem_capture_passive,mem_context,mem_stats,mem_timeline,mem_get_observation,mem_list_projects,mem_current_project,mem_doctor" \
+            | tee describe.out
+          grep -q ', 0 refused' describe.out || { sed -n '/refused/p' describe.out; exit 1; }

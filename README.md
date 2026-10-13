@@ -1,5 +1,9 @@
 # pi-openappa
 
+[![npm version](https://img.shields.io/npm/v/pi-openappa.svg)](https://www.npmjs.com/package/pi-openappa)
+[![CI](https://github.com/aemonge/pi-openappa/actions/workflows/ci.yml/badge.svg)](https://github.com/aemonge/pi-openappa/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A thin [OpenAPPA](https://openappa.com) guard extension for
 [Pi](https://pi.dev): every tool call in a protected session is checked by the
 APPA runtime before it runs, and every tool result before the model sees it.
@@ -205,13 +209,23 @@ policies declare them verbatim.
 ## Development
 
 ```sh
-npm test        # node --test, mock-driven, no runtime needed
+just check       # tests + typecheck + the three policy gates
+npm test         # node --test, mock-driven, no runtime needed
 npm run typecheck
 ```
 
 The adapter core (`src/adapter.ts`) has no Pi imports by design; the Pi
-wiring is `extensions/index.ts` only.
+wiring is `extensions/index.ts` only. Contribution ground rules — including
+the trace-or-don't-merge policy for changes to `templates/appa.toml` — are
+in [CONTRIBUTING.md](CONTRIBUTING.md). Notable changes per release live in
+[CHANGELOG.md](CHANGELOG.md).
+
+## Security
+
+Suspected vulnerabilities are reported privately via
+[GitHub security advisories](https://github.com/aemonge/pi-openappa/security/advisories/new) —
+never as public issues. Scope and expectations: [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
