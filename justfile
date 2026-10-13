@@ -63,6 +63,11 @@ release: check test-integration
     if [ -n "$(git status --porcelain | grep -v '^??')" ]; then
         echo "ERROR: uncommitted changes — commit first"; exit 1
     fi
+    whoami="$(npm whoami)" || { echo "ERROR: npm login required first"; exit 1; }
+    if ! npm owner ls pi-openappa 2>/dev/null | grep -q "^${whoami} "; then
+        echo "ERROR: logged in as '${whoami}', which is not a maintainer of pi-openappa (npm owner ls pi-openappa)"; exit 1
+    fi
+    echo "publishing as ${whoami}"
     npm publish
     git tag -a "$tag" -m "release $version"
     git push origin main
