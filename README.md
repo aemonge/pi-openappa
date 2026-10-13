@@ -34,12 +34,18 @@ pi install ./pi-openappa          # from a checkout
 
 ## Smoke test
 
-Ship and verify in one pass:
+From any checkout, everything self-verifies — no runtime, no install
+needed:
 
 ```sh
-just deploy                        # sync the lockfile, run checks, npm publish
-just remove                        # drop a local-checkout install, if present
-pi install npm:pi-openappa         # install the published package
+git clone https://github.com/aemonge/pi-openappa && cd pi-openappa
+just check     # tests + typecheck + strict lint + the three policy gates
+```
+
+Then live, from anywhere:
+
+```sh
+pi install npm:pi-openappa         # published on npm; indexed by the Pi gallery
 pi                                 # any session: protection on, appa auto-installs
 appa --version                     # OK — the runtime is on PATH
 ```
