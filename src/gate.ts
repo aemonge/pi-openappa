@@ -79,7 +79,7 @@ export function readSettings(env: NodeJS.ProcessEnv): ExtensionSettings {
       const value = record[key];
       if (typeof value === "string" && value !== "") out[key] = value;
     }
-    const timeout = record["hookTimeoutMs"];
+    const timeout = record.hookTimeoutMs;
     if (typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0) {
       out.hookTimeoutMs = timeout;
     }
@@ -167,13 +167,10 @@ export function captureGate(env: NodeJS.ProcessEnv, cwd?: string): GateState {
     ...(settings.hookTimeoutMs !== undefined ? { hookTimeoutMs: settings.hookTimeoutMs } : {}),
   };
   const explicitConfig =
-    env.APPA_CONFIG !== undefined && env.APPA_CONFIG !== ""
-      ? env.APPA_CONFIG
-      : undefined;
+    env.APPA_CONFIG !== undefined && env.APPA_CONFIG !== "" ? env.APPA_CONFIG : undefined;
   const projectGated = cwd !== undefined && existsSync(projectMarkerPath(cwd));
   const projectOff = cwd !== undefined && existsSync(projectNoMarkerPath(cwd));
-  const projectCfg =
-    projectGated && cwd !== undefined ? projectConfig(cwd) : undefined;
+  const projectCfg = projectGated && cwd !== undefined ? projectConfig(cwd) : undefined;
   // Precedence: launch env, then the project marker (per-project intent),
   // then the global settings file (see readSettings).
   const config = explicitConfig ?? projectCfg ?? settings.config;
@@ -219,10 +216,7 @@ export interface HealthResult {
   detail: string;
 }
 
-export async function checkHealth(
-  runtimeUrl: string,
-  timeoutMs = 2000,
-): Promise<HealthResult> {
+export async function checkHealth(runtimeUrl: string, timeoutMs = 2000): Promise<HealthResult> {
   try {
     const response = await fetch(new URL("health", withSlash(runtimeUrl)), {
       signal: AbortSignal.timeout(timeoutMs),

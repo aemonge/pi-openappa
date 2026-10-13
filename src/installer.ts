@@ -7,7 +7,7 @@
  * APPA_INSTALL_TIMEOUT_MS so mirrors, offline copies, and slow links work.
  */
 
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 
 export const DEFAULT_INSTALL_CMD = "curl -fsSL https://openappa.com/install.sh | sh";
 
@@ -30,12 +30,10 @@ export function resolveInstallTimeoutMs(env: NodeJS.ProcessEnv): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TIMEOUT_MS;
 }
 
-export async function installAppa(
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<InstallOutcome> {
+export async function installAppa(env: NodeJS.ProcessEnv = process.env): Promise<InstallOutcome> {
   const timeoutMs = resolveInstallTimeoutMs(env);
   return await new Promise<InstallOutcome>((resolve) => {
-    let child;
+    let child: ChildProcess;
     try {
       child = spawn("sh", ["-c", resolveInstallCmd(env)], {
         env,

@@ -19,6 +19,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm install
+      - run: npx biome check --config-path=. .
       - run: npm test
       - run: npm run typecheck
 

@@ -21,9 +21,13 @@ gates: `curl -fsSL https://openappa.com/install.sh | sh`.
 
 ## Ground rules
 
-- **Code style**: strict TypeScript (`tsc --noEmit` is the arbiter), no
-  runtime dependencies, Node ≥ 22.18. The adapter (`src/adapter.ts`) stays
-  Pi-free; the wiring (`extensions/index.ts`) owns everything host-aware.
+- **Code style**: strict TypeScript (`tsc --noEmit`) and strict Biome
+  (`just lint` — zero findings is the bar; `noExplicitAny`,
+  `noNonNullAssertion`, `noConsole` are errors everywhere, tests included;
+  no `biome-ignore` suppressions). Run `just lint-fix` for auto-fixes and
+  review the diff. No runtime dependencies; Node ≥ 22.18. The adapter
+  (`src/adapter.ts`) stays Pi-free; the wiring (`extensions/index.ts`) owns
+  everything host-aware.
 - **Commits**: `feat(pi-openappa): …` / `step(pi-openappa): …`, lowercase,
   imperative; one logical change each.
 - **New tools in Pi's toolset**: declare them in `templates/appa.toml`
@@ -37,14 +41,20 @@ gates: `curl -fsSL https://openappa.com/install.sh | sh`.
 
 ## Releasing
 
+One command, from the maintainer's terminal (the history operations are
+intentionally not agent-runnable):
+
 ```sh
-just publish        # gates + npm publish
+# 1. bump "version" in package.json and add the CHANGELOG entry
+# 2. commit, then:
+just release    # gates (incl. live tier) → npm publish → tag v<version> → push
 ```
 
-Do **not** use `just deploy` inside a devbox or wherever `package-lock.json`
-is pinned read-only — its lockfile-sync step cannot write there; sync the
-lockfile outside instead. Versions are immutable on npm: if a release ships
-wrong content, bump and supersede (see 0.3.0 → 0.3.1 in the changelog).
+Versions are immutable on npm: a release that ships wrong content is
+bumped and superseded (see 0.3.0 → 0.3.1 in the changelog). Inside a
+/devbox where `package-lock.json` is pinned read-only, do **not** use `just
+deploy` — sync the lockfile outside instead; `just release` never touches
+it.
 
 ## Reporting problems
 

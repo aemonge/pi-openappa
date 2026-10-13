@@ -26,18 +26,18 @@ import {
   stopPayload,
   toolResponseFrom,
 } from "../src/adapter.ts";
-import { invokeAppaHook, resolveHookBin } from "../src/hook-client.ts";
-import type { InvokeOptions } from "../src/hook-client.ts";
-import { installAppa, type InstallOutcome } from "../src/installer.ts";
 import {
   appaDefaultConfigPath,
   appaDefaultPolicyExists,
   captureGate,
   checkHealth,
+  type GateState,
   setGloballyOff,
   settingsPath,
-  type GateState,
 } from "../src/gate.ts";
+import type { InvokeOptions } from "../src/hook-client.ts";
+import { invokeAppaHook, resolveHookBin } from "../src/hook-client.ts";
+import { type InstallOutcome, installAppa } from "../src/installer.ts";
 
 interface TextPart {
   type: "text";
@@ -46,10 +46,7 @@ interface TextPart {
 
 /** The starter policy `/appa init` writes (templates/appa.toml in this package). */
 function templateToml(): string {
-  return readFileSync(
-    fileURLToPath(new URL("../templates/appa.toml", import.meta.url)),
-    "utf8",
-  );
+  return readFileSync(fileURLToPath(new URL("../templates/appa.toml", import.meta.url)), "utf8");
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -85,7 +82,9 @@ export default function (pi: ExtensionAPI): void {
     return outcome;
   };
 
-  const gated = (): boolean => gate?.gated === true && !unprotected;
+  /** The captured gate when this session is protected, else undefined. */
+  const gateNow = (): GateState | undefined =>
+    gate?.gated === true && !unprotected ? gate : undefined;
 
   const hookOptions = (state: GateState, extra: InvokeOptions = {}): InvokeOptions => {
     const options: InvokeOptions = { ...extra };
@@ -183,19 +182,19 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
-    if (!gated()) return;
+    const state = gateNow();
+    if (state === undefined) return;
     // The prompt event establishes the turn boundary; it does not gate.
     await enqueue(() =>
-      invokeAppaHook(promptPayload(sessionId, event.prompt, ctx.cwd), hookOptions(gate!)),
+      invokeAppaHook(promptPayload(sessionId, event.prompt, ctx.cwd), hookOptions(state)),
     );
   });
 
   pi.on("tool_call", async (event, ctx) => {
-    if (!gated()) return;
+    const state = gateNow();
+    if (state === undefined) return;
     const payload = preToolUsePayload(sessionId, event.toolName, event.input, ctx.cwd);
-    const outcome = await enqueue(() =>
-      invokeAppaHook(payload, hookOptions(gate!)),
-    );
+    const outcome = await enqueue(() => invokeAppaHook(payload, hookOptions(state)));
     const decision = parseCallDecision(outcome.exitCode, outcome.stdout, outcome.stderr);
     if (decision.type === "deny") {
       return { block: true, reason: `appa: ${decision.reason}` };
@@ -205,7 +204,8 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("tool_result", async (event, ctx) => {
-    if (!gated()) return;
+    const state = gateNow();
+    if (state === undefined) return;
     const sentInput = pendingInputs.get(event.toolCallId);
     pendingInputs.delete(event.toolCallId);
     const response = toolResponseFrom({
@@ -220,9 +220,7 @@ export default function (pi: ExtensionAPI): void {
       response,
       ctx.cwd,
     );
-    const outcome = await enqueue(() =>
-      invokeAppaHook(payload, hookOptions(gate!)),
-    );
+    const outcome = await enqueue(() => invokeAppaHook(payload, hookOptions(state)));
     const decision = parseResultDecision(outcome.exitCode, outcome.stdout, outcome.stderr);
     if (decision.type === "pass") {
       return undefined;
@@ -234,10 +232,11 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("turn_end", async () => {
-    if (!gated()) return;
+    const state = gateNow();
+    if (state === undefined) return;
     // Turn completion is reported, never gated (matching --turn-end).
     await enqueue(() =>
-      invokeAppaHook(stopPayload(sessionId), hookOptions(gate!, { turnEnd: true })),
+      invokeAppaHook(stopPayload(sessionId), hookOptions(state, { turnEnd: true })),
     );
   });
 
@@ -255,7 +254,11 @@ export default function (pi: ExtensionAPI): void {
           label: "on",
           description: "Re-enable default-on protection for every session",
         },
-        { value: "off", label: "off", description: "Disable protection globally (/appa on re-enables)" },
+        {
+          value: "off",
+          label: "off",
+          description: "Disable protection globally (/appa on re-enables)",
+        },
         {
           value: "init",
           label: "init",
@@ -273,7 +276,10 @@ export default function (pi: ExtensionAPI): void {
       return hits.length > 0 ? hits : null;
     },
     handler: async (args, ctx) => {
-      const tokens = args.trim().split(/\s+/).filter((token) => token !== "");
+      const tokens = args
+        .trim()
+        .split(/\s+/)
+        .filter((token) => token !== "");
       const arg = tokens[0] ?? "";
 
       if (arg === "on" || arg === "off") {
@@ -311,7 +317,11 @@ export default function (pi: ExtensionAPI): void {
                   ? "global opt-out (/appa on re-enables)"
                   : "on by default (/appa off disables)";
       const lines: string[] = [];
-      lines.push(state.gated ? `Protection: ON (session ${sessionId || "not started"})` : `Protection: off — ${mode}`);
+      lines.push(
+        state.gated
+          ? `Protection: ON (session ${sessionId || "not started"})`
+          : `Protection: off — ${mode}`,
+      );
       if (unprotected) {
         lines.push("Session: unprotected — no policy found; see the startup warning.");
       }
@@ -334,7 +344,11 @@ export default function (pi: ExtensionAPI): void {
   async function runInit(
     scope: "user" | "project",
     force: boolean,
-    ctx: { cwd: string; hasUI: boolean; ui: { notify: (message: string, type?: "info" | "warning" | "error") => void } },
+    ctx: {
+      cwd: string;
+      hasUI: boolean;
+      ui: { notify: (message: string, type?: "info" | "warning" | "error") => void };
+    },
   ): Promise<void> {
     const notify = (message: string, type: "info" | "warning" | "error" = "info") => {
       if (ctx.hasUI) ctx.ui.notify(message, type);
@@ -375,7 +389,9 @@ export default function (pi: ExtensionAPI): void {
         writeFileSync(settings, `${JSON.stringify({ config: policy }, null, 2)}\n`);
         lines.push(`Wrote ${settings} pointing at it.`);
       }
-      lines.push("Protection is on by default; /appa off disables it, /appa init project scopes a policy to one project.");
+      lines.push(
+        "Protection is on by default; /appa off disables it, /appa init project scopes a policy to one project.",
+      );
       notify(lines.join(" "));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -394,11 +410,7 @@ function outcomeTail(outcome: InstallOutcome): string {
 function joinContent(content: ReadonlyArray<unknown>): string {
   const parts: string[] = [];
   for (const item of content) {
-    if (
-      typeof item === "object" &&
-      item !== null &&
-      (item as { type?: unknown }).type === "text"
-    ) {
+    if (typeof item === "object" && item !== null && (item as { type?: unknown }).type === "text") {
       parts.push(String((item as { text?: unknown }).text ?? ""));
     } else {
       parts.push("[non-text content omitted]");

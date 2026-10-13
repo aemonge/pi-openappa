@@ -4,8 +4,8 @@
 # Run everything a change should pass (default)
 default: check
 
-# Tests + typecheck together, plus the policy gates
-check: test typecheck policy-check policy-test policy-coverage
+# Tests + typecheck + lint together, plus the policy gates
+check: test typecheck lint policy-check policy-test policy-coverage
 
 # Mock-driven test suite (no APPA runtime needed)
 test:
@@ -24,6 +24,14 @@ coverage:
 typecheck:
     npm run typecheck
 
+# Strict lint + format check (Biome; zero findings is the bar, no suppressions)
+lint:
+    npx biome check --config-path=. .
+
+# Apply lint/format fixes automatically (review the diff afterwards)
+lint-fix:
+    npx biome check --write --config-path=. .
+
 # Install this checkout as a local Pi package (loads live from this path)
 install:
     pi install {{justfile_directory()}}
@@ -39,6 +47,27 @@ remove:
 # Publish to npm (requires `npm login`; the Pi gallery indexes the pi-package keyword)
 publish: check
     npm publish
+
+# Ship a release in ONE command: full gates (incl. the live tier), publish
+# to npm, tag v<version>, push. Bump "version" in package.json and add the
+# CHANGELOG entry FIRST. The history operations run here on purpose: this
+# recipe belongs in the maintainer's terminal, not an agent's.
+release: check test-integration
+    #!/usr/bin/env sh
+    set -eu
+    version="$(node -p "require('./package.json').version")"
+    tag="v$version"
+    if git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1; then
+        echo "ERROR: $tag already exists — bump package.json version first"; exit 1
+    fi
+    if [ -n "$(git status --porcelain | grep -v '^??')" ]; then
+        echo "ERROR: uncommitted changes — commit first"; exit 1
+    fi
+    npm publish
+    git tag -a "$tag" -m "release $version"
+    git push origin main
+    git push origin "$tag"
+    echo "released $tag"
 
 # Ship a version: sync the lockfile version, run every check, publish to npm
 # (run the README smoke test right after)

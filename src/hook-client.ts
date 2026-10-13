@@ -10,7 +10,7 @@
  *   APPA_* conventions flow straight through to the binary).
  */
 
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import type { AppaHookPayload } from "./adapter.ts";
 
 export interface HookOutcome {
@@ -58,7 +58,7 @@ export async function invokeAppaHook(
   if (options.config !== undefined) args.push("--config", options.config);
 
   return await new Promise<HookOutcome>((resolve) => {
-    let child;
+    let child: ChildProcess;
     try {
       child = spawn(bin, args, {
         env: { ...process.env, APPA_GATE: "1" },

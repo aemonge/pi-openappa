@@ -31,6 +31,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Strict lint tier: Biome with `noExplicitAny`, `noNonNullAssertion`,
+  `noConsole`, unused-everything as errors — production and tests alike,
+  zero suppressions; `just lint` / `just lint-fix`, wired into `just check`
+  and CI. The mock's wire output moved from `console.*` to raw stdio
+  writes (its bytes are the protocol under test). Dev dependency on the
+  peer package exact-pinned to 1.0.4 after a transient `--no-package-lock`
+  install drifted to 1.2.0 and changed event types mid-task.
+- `just release`: one command — full gates including the live tier, npm
+  publish, annotated `v<version>` tag, push; refuses existing tags and
+  dirty trees.
 - `just test-integration` / `APPA_INTEGRATION=1`: boots a real `appa
   runtime` with the starter policy and drives the extension end-to-end —
   the tier that caught the remedy-gating above (and two test-tier bugs:

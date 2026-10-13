@@ -27,9 +27,7 @@ export interface AppaHookPayload {
 }
 
 /** Decision for a tool call (PreToolUse). */
-export type AppaCallDecision =
-  | { type: "allow" }
-  | { type: "deny"; reason: string };
+export type AppaCallDecision = { type: "allow" } | { type: "deny"; reason: string };
 
 /** Decision for a tool result (PostToolUse). */
 export type AppaResultDecision =
@@ -60,9 +58,7 @@ export function mapToolName(piName: string): string {
 export function mapSessionSource(
   reason: "startup" | "reload" | "new" | "resume" | "fork",
 ): "startup" | "resume" {
-  return reason === "resume" || reason === "fork" || reason === "reload"
-    ? "resume"
-    : "startup";
+  return reason === "resume" || reason === "fork" || reason === "reload" ? "resume" : "startup";
 }
 
 export function sessionStartPayload(
@@ -78,11 +74,7 @@ export function sessionStartPayload(
   };
 }
 
-export function promptPayload(
-  sessionId: string,
-  prompt: string,
-  cwd: string,
-): AppaHookPayload {
+export function promptPayload(sessionId: string, prompt: string, cwd: string): AppaHookPayload {
   return {
     session_id: sessionId,
     hook_event_name: "UserPromptSubmit",
@@ -272,7 +264,10 @@ export function parseResultDecision(
   if (exitCode === 0 && isRecord(updated)) {
     return { type: "replace", text: renderToolOutput(updated), isError: false };
   }
-  if (exitCode === 0 && (out === undefined || out.decision === undefined || out.decision === "allow")) {
+  if (
+    exitCode === 0 &&
+    (out === undefined || out.decision === undefined || out.decision === "allow")
+  ) {
     return { type: "pass" };
   }
   const reason =

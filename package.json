@@ -31,7 +31,9 @@
     "CHANGELOG.md"
   ],
   "pi": {
-    "extensions": ["./extensions/index.ts"]
+    "extensions": [
+      "./extensions/index.ts"
+    ]
   },
   "main": "./extensions/index.ts",
   "scripts": {
@@ -42,7 +44,8 @@
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^1.0.4",
+    "@biomejs/biome": "^2.5.15",
+    "@earendil-works/pi-coding-agent": "1.0.4",
     "typescript": "^5.9.3"
   }
 }

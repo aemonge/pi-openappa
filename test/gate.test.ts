@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { after, describe, it } from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { after, describe, it } from "node:test";
 import {
   appaDefaultPolicyExists,
   captureGate,
@@ -29,7 +29,10 @@ after(() => {
 });
 
 /** Fresh env with isolated HOME/XDG (no markers, no default policy) + project dir. */
-function fresh(): { env: Record<string, string>; proj: string } {
+function fresh(): {
+  env: Record<string, string> & { HOME: string; XDG_CONFIG_HOME: string };
+  proj: string;
+} {
   const dir = mkdtempSync(join(tmpdir(), "pi-openappa-gate-"));
   workDirs.push(dir);
   return {
@@ -38,7 +41,7 @@ function fresh(): { env: Record<string, string>; proj: string } {
   };
 }
 
-function projectMarker(env: Record<string, string>, proj: string, content = ""): void {
+function projectMarker(proj: string, content = ""): void {
   mkdirSync(join(proj, ".pi"), { recursive: true });
   writeFileSync(join(proj, ".pi", "openappa"), content);
 }
@@ -64,7 +67,7 @@ describe("default-on gate resolution", () => {
 
   it("an explicit launch choice beats every project marker", () => {
     const { env, proj } = fresh();
-    projectMarker(env, proj, "appa.toml");
+    projectMarker(proj, "appa.toml");
     mkdirSync(join(proj, ".pi"), { recursive: true });
     writeFileSync(join(proj, ".pi", "no-openappa"), "");
     env.APPA_GATE = "1";
@@ -75,7 +78,7 @@ describe("default-on gate resolution", () => {
 
   it(".pi/openappa gates the project and names its policy", () => {
     const { env, proj } = fresh();
-    projectMarker(env, proj, "appa.toml\n");
+    projectMarker(proj, "appa.toml\n");
     const state = captureGate(env, proj);
     assert.equal(state.gated, true);
     assert.equal(state.source, "project");
@@ -84,7 +87,7 @@ describe("default-on gate resolution", () => {
 
   it(".pi/no-openappa opts the project out, beating .pi/openappa", () => {
     const { env, proj } = fresh();
-    projectMarker(env, proj, "appa.toml");
+    projectMarker(proj, "appa.toml");
     writeFileSync(join(proj, ".pi", "no-openappa"), "");
     const state = captureGate(env, proj);
     assert.equal(state.gated, false);
@@ -93,7 +96,7 @@ describe("default-on gate resolution", () => {
 
   it("the /appa off marker opts out globally; APPA_CONFIG still names a policy", () => {
     const { env, proj } = fresh();
-    mkdirSync(join(env.XDG_CONFIG_HOME!, "pi-openappa"), { recursive: true });
+    mkdirSync(join(env.XDG_CONFIG_HOME, "pi-openappa"), { recursive: true });
     writeFileSync(globalOffMarkerPath(env), "");
     const state = captureGate(env, proj);
     assert.equal(state.gated, false);
@@ -105,7 +108,7 @@ describe("default-on gate resolution", () => {
 
   it("ignores the legacy always-on marker (default is already on)", () => {
     const { env, proj } = fresh();
-    mkdirSync(join(env.XDG_CONFIG_HOME!, "pi-openappa"), { recursive: true });
+    mkdirSync(join(env.XDG_CONFIG_HOME, "pi-openappa"), { recursive: true });
     writeFileSync(legacyAlwaysOnMarkerPath(env), "");
     assert.equal(captureGate(env, proj).source, "default");
   });
@@ -119,13 +122,13 @@ describe("appaDefaultPolicyExists heuristic", () => {
 
   it("finds ~/.config/appa/appa.toml and the XDG equivalent", () => {
     const home = fresh();
-    mkdirSync(join(home.env.HOME!, ".config", "appa"), { recursive: true });
-    writeFileSync(join(home.env.HOME!, ".config", "appa", "appa.toml"), "");
+    mkdirSync(join(home.env.HOME, ".config", "appa"), { recursive: true });
+    writeFileSync(join(home.env.HOME, ".config", "appa", "appa.toml"), "");
     assert.equal(appaDefaultPolicyExists(home.env), true);
 
     const xdg = fresh();
-    mkdirSync(join(xdg.env.XDG_CONFIG_HOME!, "appa"), { recursive: true });
-    writeFileSync(join(xdg.env.XDG_CONFIG_HOME!, "appa", "appa.toml"), "");
+    mkdirSync(join(xdg.env.XDG_CONFIG_HOME, "appa"), { recursive: true });
+    writeFileSync(join(xdg.env.XDG_CONFIG_HOME, "appa", "appa.toml"), "");
     assert.equal(appaDefaultPolicyExists(xdg.env), true);
   });
 });
