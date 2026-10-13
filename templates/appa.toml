@@ -31,7 +31,19 @@
 #   credential files                              --self-narrow-->  session
 #   refused while carrying either: edits to existing code (docs excepted),
 #   writes to tests/devops/infra/credential paths, git push / gh ...,
-#   mem_save / mem_update, and edits to this policy file.
+#   mem_save / mem_update / mem_delete, and edits to this policy file.
+#
+# KNOWN HOLES (documented, not fenced — external review 2026-10-13):
+#   - selectors match command/path TEXT as written: obfuscated spellings
+#     ($(...) substitutions, heredocs, aliases, python -c / node -e fetchers)
+#     fall through to the plain rules
+#   - local files and MCP tool descriptions are trusted sources: a poisoned
+#     in-repo README does not taint the session (0.4 candidate: annotation)
+#   - once narrowing exists again: docs/ is writable by tainted sessions, and
+#     a FRESH session can later push what they wrote (no file provenance)
+#   - `write` cannot distinguish create from overwrite (see the Write section)
+#   - destructive commands (rm -rf, sudo, chmod) are out of IFC scope: the
+#     OS, backups, and you remain that guard
 
 # ══════════════════════════════════════════════════════════════════════════
 # GROUND RULES (verified against appa 0.31.1; docs/wire-notes.md)
@@ -77,41 +89,43 @@ version = 2
 #
 # The official default allow-lists trusted docs domains on WebFetch; Pi has
 # no URL-argumented web tool, so the same carve-out is spelled on curl.
-# Reading these keeps the session's label: docs sites whose authors are the
-# platform vendors. Everything else fetched is foreign text (next block).
-# Extend with the domains you trust; wget is not carved out — add mirrors
-# if you use it for docs.
+# Reading these keeps the session's label. PATTERNS ARE ANCHORED: each ends
+# `<domain>/*`, requiring the path slash immediately after the domain, so
+# `docs.anthropic.com.evil.example/`, `…com:8443/`, and `…com@evil/`
+# (userinfo tricks) do NOT match — they fall through to the plain fetch
+# rule and get labeled. Extend with your own domains, anchored the same
+# way; wget is not carved out — add mirrors if you use it for docs.
 
 [[policy.tool]]
-name = "host/claude-code/Bash(command:*curl*docs.anthropic.com*)"
+name = "host/claude-code/Bash(command:*curl*docs.anthropic.com/*)"
 delta = {}
 
 [[policy.tool]]
-name = "host/claude-code/Bash(command:*curl*code.claude.com*)"
+name = "host/claude-code/Bash(command:*curl*code.claude.com/*)"
 delta = {}
 
 [[policy.tool]]
-name = "host/claude-code/Bash(command:*curl*openappa.com*)"
+name = "host/claude-code/Bash(command:*curl*openappa.com/*)"
 delta = {}
 
 [[policy.tool]]
-name = "host/claude-code/Bash(command:*curl*nodejs.org*)"
+name = "host/claude-code/Bash(command:*curl*nodejs.org/*)"
 delta = {}
 
 [[policy.tool]]
-name = "host/claude-code/Bash(command:*curl*developer.mozilla.org*)"
+name = "host/claude-code/Bash(command:*curl*developer.mozilla.org/*)"
 delta = {}
 
 [[policy.tool]]
-name = "host/claude-code/Bash(command:*curl*typescriptlang.org*)"
+name = "host/claude-code/Bash(command:*curl*typescriptlang.org/*)"
 delta = {}
 
 [[policy.tool]]
-name = "host/claude-code/Bash(command:*curl*doc.rust-lang.org*)"
+name = "host/claude-code/Bash(command:*curl*doc.rust-lang.org/*)"
 delta = {}
 
 [[policy.tool]]
-name = "host/claude-code/Bash(command:*curl*docs.python.org*)"
+name = "host/claude-code/Bash(command:*curl*docs.python.org/*)"
 delta = {}
 
 # ─── Bash: publishing — tainted data may not leave the machine ─────────────
@@ -733,6 +747,7 @@ delta = {}
 [[policy.tool]]
 name = "host/claude-code/mem_delete"
 description = "Deletes an Engram observation."
+requires = { trust = "trusted" }
 delta = {}
 
 [[policy.tool]]

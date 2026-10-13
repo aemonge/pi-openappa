@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [SemVer](https://semver.org/).
 
+## [0.3.3] — 2026-10-13
+
+### Fixed
+
+- Trusted-docs curl carve-outs are now **anchored** (`<domain>/*`): a
+  substring-match trick (`docs.anthropic.com.evil.example/`, `…com:8443/`,
+  userinfo `…com@evil/`) no longer lands in the trusted lane — those URLs
+  fall through to the plain fetch rule and get labeled (external review
+  catch, 2026-10-13).
+- `mem_delete` joins the armed memory-tamper fence (consistency with
+  `mem_save` / `mem_update` / `mem_capture_passive`).
+
+### Changed
+
+- The template header now carries a consolidated KNOWN HOLES list (selector
+  text-matching/obfuscation, trusted local files & MCP descriptions, the
+  docs-laundering path once narrowing returns, the write create/overwrite
+  hole, destructive commands out of scope).
+
 ## [0.3.2] — 2026-10-09
 
 ### Fixed
