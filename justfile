@@ -16,6 +16,10 @@ test:
 test-integration:
     APPA_INTEGRATION=1 npm test
 
+# Coverage report for the mock-driven suite (informational; not in `check`)
+coverage:
+    node --test --experimental-test-coverage 'test/*.test.ts'
+
 # TypeScript check, no emit
 typecheck:
     npm run typecheck

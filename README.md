@@ -241,6 +241,14 @@ Suspected vulnerabilities are reported privately via
 [GitHub security advisories](https://github.com/aemonge/pi-openappa/security/advisories/new) —
 never as public issues. Scope and expectations: [SECURITY.md](SECURITY.md).
 
+**Supply-chain pinning** (if you do not want the runtime auto-installed from
+the network): pre-install `appa` and point `APPA_HOOK_BIN` at a checksummed
+binary path, and set `APPA_INSTALL_CMD` to an offline copy or a mirror you
+control — auto-install only ever runs when the default `appa` is missing,
+once, using that exact command. Destructive-command safety (`rm -rf`,
+`sudo`, …) is out of the policy's scope by design: the OS, backups, and you
+remain that guard.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
