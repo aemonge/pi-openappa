@@ -840,7 +840,7 @@ describe("/appa init", () => {
     assert.ok(existsSync(policy), "policy written");
     const content = readFileSync(policy, "utf8");
     assert.ok(content.includes("version = 2"));
-    assert.ok(content.includes("host/claude-code/Bash(command:*.env*)"));
+    assert.ok(content.includes("requires = { trust = \"trusted\" }"), "armed sinks present");
     assert.ok(content.includes("Edit(path:*.md)"), "docs landing zone present");
     assert.ok(content.includes("Write(path:*Makefile*)"), "devops fence present");
     const settingsFile = join(dir, "xdg", "pi-openappa", "settings.json");

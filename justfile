@@ -11,6 +11,11 @@ check: test typecheck policy-check policy-test policy-coverage
 test:
     npm test
 
+# End-to-end against a REAL appa runtime (boots one on a spare loopback
+# port with the starter policy; no mocks anywhere). Needs the appa CLI.
+test-integration:
+    APPA_INTEGRATION=1 npm test
+
 # TypeScript check, no emit
 typecheck:
     npm run typecheck

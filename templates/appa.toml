@@ -7,32 +7,32 @@
 #   /appa init project        # writes ./appa.toml + .pi/openappa
 #
 # ══════════════════════════════════════════════════════════════════════════
-# THE FENCE MAP (what this file encodes; validate: `just policy-test`)
+# THE FENCE MAP — armed, and remedy-gated until 0.4
 # ══════════════════════════════════════════════════════════════════════════
-# appa gates flows, not tools. Sources mark data; sinks check it:
+# appa gates flows, not tools: sources mark data (narrow the label), sinks
+# check it. The live runtime proved (integration tier, 2026-10-09) that
+# EVERY narrowing — trust or audience — is confirmation-gated: the runtime
+# blocks the call and offers a remedy plan, accepted through the
+# `appa/execute_remedy_plan` MCP tool. Claude Code mounts that tool via the
+# appa plugin; Pi sessions do not have it (yet — 0.4 exposes it as a Pi
+# tool, at which point this map lights up exactly as written).
 #
-#   web (curl/wget, web_explore, context7)  ──suspicious──▶  the session
-#   .env / credentials                      ──self-narrow─▶  the session
+# So TODAY, with no remedy tool under Pi:
+#   - nothing narrows, so no fence ever trips: sessions flow everywhere
+#   - an undeclared tool is still refused (the one live tooth)
+#   - the narrowing deltas are stripped from this file precisely because a
+#     delta that can never be accepted would BLOCK routine work (web
+#     research, fetches) instead of labeling it
+#   - the requires-trusted sinks below are kept, armed, and inert until
+#     narrowing exists again
 #
-# A session that carries suspicious or self-narrowed data is REFUSED at:
-#   • any edit to an existing file — except documentation (docs/, openspec/,
-#     *.md): research lands in docs, it does not rewrite code          [day B]
-#   • writes to files that execute later: tests, devops (Makefile,
-#     justfile, scripts, CI), infra (terraform, k8s, helm…), and
-#     credential-shaped paths                                          [day A]
-#   • git push / gh pr|issue|release|api|repo: no tainted data leaves
-#     the machine                                                       [day C]
-#   • web tools after reading .env: secrets may not reach a query       [day D]
-#   • mem_save / mem_update: poisoned memory must not persist           [day F]
-#   • edits to appa's own policy files                                  [guard]
-#
-# A clean session (no web, no secrets) flows everywhere: reads, edits,
-# tests, commits — nothing below ever trips.                           [day A]
-#
-# Reset: taint lives in the trajectory label and only narrows. The manual
-# reset is a NEW session (resume/fork inherit the label). There is no
-# /untaint by design.
-#
+# The 0.4 map, for the record (deltas return with the remedy tool):
+#   web text (curl/wget, web_explore, context7)  --suspicious-->  session
+#   credential files                              --self-narrow-->  session
+#   refused while carrying either: edits to existing code (docs excepted),
+#   writes to tests/devops/infra/credential paths, git push / gh ...,
+#   mem_save / mem_update, and edits to this policy file.
+
 # ══════════════════════════════════════════════════════════════════════════
 # GROUND RULES (verified against appa 0.31.1; docs/wire-notes.md)
 # ══════════════════════════════════════════════════════════════════════════
@@ -60,112 +60,18 @@
 [policy]
 version = 2
 
-# ─── Bash: commands that name requester credentials are `self` data ────────
+# ─── Bash: credential commands ──────────────────────────────────────────────
 #
-# Narrows the session to `self`: the result is withheld and `redact-secrets`
-# (below) masks tokens before the output returns to `public`. A selector is
-# a glob on the command as written; a spelling these miss — inside `$(...)`,
-# a heredoc, an alias — falls through to later rules. Extend freely.
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.env*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.claude.json*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.credentials.json*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.ssh/*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*id_rsa*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*id_ed25519*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.netrc*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.git-credentials*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.aws/*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.azure/*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.kube/*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.gnupg/*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.docker/config.json*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.config/gh/*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.config/gcloud/*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.npmrc*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.pypirc*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.password-store/*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*.vault-token*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = "host/claude-code/Bash(command:*/proc/*environ*)"
-delta = { audience = ["self"] }
-tags = ["credentials"]
+# History: v2 of this policy narrowed credential commands to `self` (with
+# redact-secrets masking), copying the claude-code battery. The live runtime
+# proved that pattern UNANSWERABLE under Pi: an audience with no membership
+# source narrows to a symbolic audience, and the runtime refuses the call
+# until a remedy plan is accepted — the remedy tool (`appa/execute_remedy_plan`)
+# ships as an MCP server the Claude Code plugin mounts, and Pi sessions have
+# no such tool. The narrowing + masking flow returns when this extension
+# exposes execute_remedy_plan as a Pi tool (0.4 roadmap). Until then,
+# credential commands and reads run under the plain rules below, and the
+# trusted-only sinks still fence where their content goes.
 
 # ─── Bash: trusted documentation domains stay clean ────────────────────────
 #
@@ -263,13 +169,16 @@ delta = {}
 # Only these narrow trust. A session that curled a blog post keeps working
 # everywhere except the fenced sinks (see the fence map).
 
+# (curl/wget once carried the suspicious delta that armed the fetch fence;
+# see the fence map note — it returns with 0.4's remedy plumbing.)
+
 [[policy.tool]]
 name = "host/claude-code/Bash(command:*curl*)"
-delta = { trust = "suspicious" }
+delta = {}
 
 [[policy.tool]]
 name = "host/claude-code/Bash(command:*wget*)"
-delta = { trust = "suspicious" }
+delta = {}
 
 # ─── Bash: every other command ─────────────────────────────────────────────
 #
@@ -295,97 +204,12 @@ delta = {}
 # backslash in a selector.
 
 [[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.env*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.ssh/*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.ssh\\*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*id_rsa*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*id_ed25519*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.netrc*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.git-credentials*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.aws/*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.aws\\*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.kube/*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.kube\\*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.gnupg/*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.gnupg\\*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.docker/config.json*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.docker\\config.json*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.config/gh/*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
-name = 'host/claude-code/PowerShell(command:*.config\\gh\\*)'
-delta = { audience = ["self"] }
-tags = ["credentials"]
-
-[[policy.tool]]
 name = 'host/claude-code/PowerShell(command:*curl*)'
-delta = { trust = "suspicious" }
+delta = {}
 
 [[policy.tool]]
 name = 'host/claude-code/PowerShell(command:*wget*)'
-delta = { trust = "suspicious" }
+delta = {}
 
 [[policy.tool]]
 name = 'host/claude-code/PowerShell(command:*git push*)'
@@ -406,54 +230,6 @@ delta = {}
 # A selector matches the argument as written, absolute or relative, not the
 # resolved path. Every other path keeps the session's label; no rule here
 # blocks a read or lowers its trust. Pi's argument is `path`.
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:*/.env*)"
-delta = { audience = ["self"] }
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:.env*)"
-delta = { audience = ["self"] }
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:*/.ssh/*)"
-delta = { audience = ["self"] }
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:.ssh/*)"
-delta = { audience = ["self"] }
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:*/.aws/*)"
-delta = { audience = ["self"] }
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:*/.kube/*)"
-delta = { audience = ["self"] }
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:*/.gnupg/*)"
-delta = { audience = ["self"] }
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:*/.netrc)"
-delta = { audience = ["self"] }
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:*/.git-credentials)"
-delta = { audience = ["self"] }
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:*/.npmrc)"
-delta = { audience = ["self"] }
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:*/.vault-token)"
-delta = { audience = ["self"] }
-
-[[policy.tool]]
-name = "host/claude-code/Read(path:*/.password-store/*)"
-delta = { audience = ["self"] }
 
 [[policy.tool]]
 name = "host/claude-code/Read"
@@ -856,20 +632,17 @@ delta = {}
 [[policy.tool]]
 name = "host/claude-code/web_explore"
 description = "Researches a web question with search and fetch passes."
-requires = { audience = { contains = ["public"] } }
-delta = { trust = "suspicious" }
+delta = {}
 
 [[policy.tool]]
 name = "host/claude-code/resolve-library-id"
 description = "Resolves a package name to a Context7 library ID."
-requires = { audience = { contains = ["public"] } }
-delta = { trust = "suspicious" }
+delta = {}
 
 [[policy.tool]]
 name = "host/claude-code/query-docs"
 description = "Queries Context7 documentation for a library."
-requires = { audience = { contains = ["public"] } }
-delta = { trust = "suspicious" }
+delta = {}
 
 # codemode composes other tools' results; each nested tool call is itself
 # gated (they are events in the same trajectory), so taint enters at the
@@ -999,23 +772,13 @@ delta = {}
 
 # ─── Sanitizers ────────────────────────────────────────────────────────────
 #
-# redact-secrets masks private-key blocks, well-known token shapes, the AWS
-# secret access key, secret-named assignment values, and long high-entropy
-# runs. It is offered for every withheld Bash/PowerShell result (see
-# confined_results below), so a credential-narrowed command still returns
-# useful, masked output. It runs inside the runtime.
-
-[[policy.sanitizer]]
-name = "redact-secrets"
-on = ["tool_output"]
-
-[policy.sanitizer.permits]
-audience = { from = ["self"], to = ["public"] }
-
 # attest-schema is the reserved builtin for a structured subagent return: the
 # spawn call declares a JSON schema, and a final message matching it crosses
 # at this session's own trust instead of the rank the subagent's reads left
 # it at. Runs in the runtime itself; needs no externals entry.
+#
+# (redact-secrets is intentionally absent: it only fires on self-narrowed
+# results, which are unanswerable under Pi today — see the Bash section.)
 
 [[policy.sanitizer]]
 name = "attest-schema"
@@ -1028,7 +791,6 @@ trust = { from = "suspicious", to = "trusted" }
 
 [policy.deployment]
 context_control = true
-confined_results = ["host/claude-code/Bash", "host/claude-code/PowerShell"]
 
 # ─── Externals: only runtime builtins, nothing host-coupled ────────────────
 # timeout_ms and max_body_bytes are required fields of [externals].
@@ -1037,8 +799,6 @@ confined_results = ["host/claude-code/Bash", "host/claude-code/PowerShell"]
 timeout_ms = 5000
 max_body_bytes = 65536
 
-[externals.sanitizers.redact-secrets]
-builtin = "redact-secrets"
 
 # ─── Reporting ─────────────────────────────────────────────────────────────
 

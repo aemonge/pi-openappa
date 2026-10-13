@@ -13,6 +13,30 @@ All notable changes to this project are documented here. The format follows
   non-existent `aemonge-dev` path). Node engine floor declared (`>=22.18`,
   where TS type-stripping needs no flags).
 
+### Changed
+
+- **Starter policy: narrowing deltas stripped — they blocked live work.**
+  The new integration tier (real runtime, real `appa hook`, no mocks)
+  proved the live runtime confirmation-gates EVERY label narrowing,
+  waiting for `appa/execute_remedy_plan` (an MCP tool Claude Code mounts
+  and Pi does not): as shipped, web research and fetches were refused, and
+  no fence could ever arm. The source deltas are removed (deny-undeclared
+  remains live); the requires-trusted sink rules stay, armed and inert,
+  with the full 0.4 fence map documented in the template. Traces and the
+  integration suite now pin today's live truth deliberately.
+- Community standards: CI (node matrix + a policy job running the gates,
+  replays, coverage, and the live integration tier), CHANGELOG (shipped in
+  the tarball), SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, issue/PR
+  templates, dependabot, README badges.
+
+### Added
+
+- `just test-integration` / `APPA_INTEGRATION=1`: boots a real `appa
+  runtime` with the starter policy and drives the extension end-to-end —
+  the tier that caught the remedy-gating above (and two test-tier bugs:
+  trajectories bleed across shared session ids; every allowed PreToolUse
+  must be closed by its PostToolUse before the next opens).
+
 ## [0.3.1] — 2026-10-09
 
 ### Fixed

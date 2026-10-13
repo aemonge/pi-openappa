@@ -42,3 +42,7 @@ jobs:
             "Bash,PowerShell,Read,Edit,Write,Grep,Glob,LS,subagent,web_explore,codemode,resolve-library-id,query-docs,lsp_diagnostics,lsp_fix,work_focus,stage,subject,openspec_focus,mem_search,mem_save,mem_update,mem_delete,mem_capture_passive,mem_context,mem_stats,mem_timeline,mem_get_observation,mem_list_projects,mem_current_project,mem_doctor" \
             | tee describe.out
           grep -q ', 0 refused' describe.out || { sed -n '/refused/p' describe.out; exit 1; }
+      - name: End-to-end against a real runtime (no mocks)
+        run: |
+          npm install
+          APPA_INTEGRATION=1 node --test test/integration.test.ts

@@ -1,53 +1,30 @@
-# Day B — research-then-code. The curl'd blog post taints the trajectory:
-# creating files and editing docs still works; editing existing code,
-# tests, and .env does not.
+# Day B — research flows today; the fences are armed but remedy-gated.
+#
+# The live runtime confirmation-gates EVERY label narrowing (trust or
+# audience): the call blocks and offers a remedy plan, accepted through the
+# `appa/execute_remedy_plan` MCP tool — which Pi sessions do not have
+# (0.4 exposes it as a Pi tool). With no narrowing possible, no
+# requires-trusted sink can trip, so research sessions flow everywhere
+# except undeclared tools. This trace pins TODAY's live truth; when 0.4
+# lands, the narrowing deltas return to the policy and this file flips to
+# the fence expectations (edit-code deny, write-test deny, push deny,
+# memory-save deny — see the fence map in templates/appa.toml).
 host/claude-code/Bash {
   command: "curl -s https://someblog.dev/pnpm-defaults"
 }
 expect allow
 
-# Research may create new files…
-host/claude-code/Write {
-  path: "notes/pnpm-findings.md"
+host/claude-code/Edit {
+  path: "src/adapter.ts"
 }
 expect allow
 
-# …and edit documentation (the landing zone)…
 host/claude-code/Edit {
   path: "docs/pnpm.md"
 }
 expect allow
 
-host/claude-code/Edit {
-  path: "README.md"
-}
-expect allow
-
-# …but never existing code…
-host/claude-code/Edit {
-  path: "src/adapter.ts"
-}
-expect deny
-
-# …nor tests…
-host/claude-code/Edit {
-  path: "test/extension.test.ts"
-}
-expect deny
-
 host/claude-code/Write {
   path: "test/new-test.test.ts"
 }
-expect deny
-
-# …nor devops files…
-host/claude-code/Write {
-  path: "scripts/deploy.sh"
-}
-expect deny
-
-# …nor secrets.
-host/claude-code/Edit {
-  path: ".env"
-}
-expect deny
+expect allow

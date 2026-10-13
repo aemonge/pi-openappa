@@ -113,25 +113,26 @@ then `settings.json`'s `config`, then APPA's own default
 
 ## Starter policy: `/appa init`
 
-`templates/appa.toml` is a complete, self-contained policy written for Pi.
-It gates **flows, not tools**: sources mark data, sinks check it.
+`templates/appa.toml` declares every known Pi tool (deny-undeclared is the
+one live tooth today) and carries the full **fence map** — the sink rules
+that refuse calls from narrowed sessions: edits to existing code (docs
+excepted), writes to tests/devops/infra/credential paths, `git push` and
+`gh …`, memory writes, and the policy's own files.
 
-| When a session carries… | it is refused at… |
-|---|---|
-| web text (`curl`/`wget`, `web_explore`, context7) | editing any existing file except docs/openspec/`*.md` (research lands in docs, it doesn't rewrite code); writing tests, devops (Makefile, justfile, scripts, CI, Dockerfile), infra (terraform, k8s, helm…), or credential-shaped paths; `git push` / `gh …`; `mem_save`/`mem_update` (poisoned memory must not persist) |
-| `.env`/credentials (read or commanded) | web tools (a secret-narrowed session cannot prove a query shareable) — trusted docs domains carved out for `curl`; bash output returns masked via `redact-secrets` |
-| anything | editing appa's own policy files |
-| nothing (clean session) | nowhere — reads, edits, tests, commits, pushes all flow |
+**The fences are armed but remedy-gated.** The live runtime
+confirmation-gates *every* label narrowing: the call blocks and offers a
+remedy plan, accepted through the `appa/execute_remedy_plan` MCP tool —
+which Claude Code mounts via its plugin and **Pi does not have yet**.
+Until 0.4 exposes it as a Pi tool, the source deltas are stripped (an
+unacceptable narrowing would *block* web research instead of labeling it),
+so nothing narrows and the sinks stay inert: sessions flow everywhere
+except undeclared tools. The fence map — the exact 0.4 target — is
+documented at the top of `templates/appa.toml`, and the integration tier
+pins today's truth so the change flips deliberately.
 
-An undeclared tool is refused before it runs (deny-by-default; a `*`
-wildcard requires an annotator, so refusing is the only annotator-free
-stance — the commented `builtin = "llm"` block shows the classifier
-upgrade). Selectors use **Pi argument names** (`Read(path:…)`, not Claude
-Code's `file_path` — the stock battery's never match a Pi call), and the
-policy is **static rules only**: nothing host-coupled, nothing that can be
-unreachable. Taint lives in the trajectory label and only narrows — the
-manual reset is a **new session** (resume/fork inherit it; there is no
-`/untaint` by design).
+Selectors use **Pi argument names** (`Read(path:…)`, not Claude Code's
+`file_path`), and the policy is **static rules only**: nothing host-coupled,
+nothing that can be unreachable.
 
 Install it one of three ways:
 
@@ -180,6 +181,20 @@ policies declare them verbatim.
 
 ## Limitations
 
+- **Remedy-gated narrowing (until 0.4)**: the runtime blocks every label
+  change until a remedy plan is accepted via `appa/execute_remedy_plan` —
+  an MCP tool Pi does not mount. The starter policy therefore ships with
+  source deltas stripped (see the starter-policy section); the fence map
+  lights up when the extension exposes the remedy tool.
+- **Selectors match command text as written**: a selector like
+  `Bash(command:*.env*)` matches any command *mentioning* that substring —
+  including comments, docstrings, or heredocs that discuss credentials.
+  Fail-closed, benign, and occasionally surprising (this repo's own policy
+  work once tripped it).
+- **One open call per host**: the runtime permits one unanswered tool call
+  per session at a time; a second `PreToolUse` before the previous call's
+  result is refused (`…must propose one unidentified call at a time`).
+  Parallel tool batches therefore degrade to their first call under gating.
 - **Load order matters in theory**: the runtime digests tool arguments at
   `PreToolUse`. If another extension rewrites `event.input` after this
   handler runs, the executed arguments differ from the checked ones and the
