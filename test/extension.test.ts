@@ -103,6 +103,8 @@ interface Harness {
     }
   >;
   ctx: unknown;
+  /** Recorded [key, text] pairs from ctx.ui.setStatus (fake UI). */
+  statuses: Array<[string, string | undefined]>;
 }
 
 async function loadExtension(cwd?: string): Promise<Harness> {
@@ -114,13 +116,19 @@ async function loadExtension(cwd?: string): Promise<Harness> {
     registerCommand: (name: string, options: { handler: Handler }) => commands.set(name, options),
   };
   mod.default(fakePi);
+  const statuses: Array<[string, string | undefined]> = [];
   const ctx = {
     cwd: cwd ?? "/home/aemonge/projects/pi-openappa",
     hasUI: false,
     sessionManager: { getSessionId: () => SESSION },
-    ui: { notify: () => {} },
+    ui: {
+      notify: () => {},
+      setStatus: (key: string, text: string | undefined) => {
+        statuses.push([key, text]);
+      },
+    },
   };
-  return { handlers, commands, ctx };
+  return { handlers, commands, ctx, statuses };
 }
 
 async function startSession(harness: Harness, reason = "startup"): Promise<void> {
@@ -152,9 +160,20 @@ function hermeticPath(...extraDirs: string[]): string {
 /** Give the fake ctx a recording UI; returns [kind, message] pairs. */
 function enableUiSpy(harness: Harness): Array<[string, string]> {
   const notices: Array<[string, string]> = [];
-  const ctx = harness.ctx as { hasUI?: boolean; ui?: { notify: (m: string, k: string) => void } };
+  const ctx = harness.ctx as {
+    hasUI?: boolean;
+    ui?: {
+      notify: (m: string, k: string) => void;
+      setStatus?: (k: string, t: string | undefined) => void;
+    };
+  };
   ctx.hasUI = true;
-  ctx.ui = { notify: (message, kind) => notices.push([kind, message]) };
+  ctx.ui = {
+    notify: (message, kind) => notices.push([kind, message]),
+    setStatus: (key: string, text: string | undefined) => {
+      harness.statuses.push([key, text]);
+    },
+  };
   return notices;
 }
 
@@ -195,6 +214,7 @@ describe("opted-out session (APPA_GATE=0): extension is inert", () => {
     process.env.APPA_HOOK_BIN = MOCK_BIN;
     process.env.MOCK_RECORD = join(dir, "record.jsonl");
     const harness = await loadExtension();
+    enableUiSpy(harness);
     await startSession(harness);
     const prompt = await handler(harness, "before_agent_start")(
       { type: "before_agent_start", prompt: "hello", systemPrompt: "", systemPromptOptions: {} },
@@ -208,6 +228,9 @@ describe("opted-out session (APPA_GATE=0): extension is inert", () => {
     assert.equal(result, undefined);
     assert.equal(turnEnd, undefined);
     assert.deepEqual(recordedLines(dir), []);
+    // Opted out is a state, not an error: publish it instead of silence
+    // (pi-stardeck renders silence as a red "off" chip).
+    assert.deepEqual(harness.statuses, [["openappa", "openappa off · protection opted out"]]);
   });
 });
 
@@ -226,6 +249,42 @@ describe("gated session through the scripted mock", () => {
       events.map((e) => e.hook_event_name),
       ["SessionStart", "PreToolUse", "PostToolUse"],
     );
+    // The call id must reach the runtime: unidentified calls are serialized
+    // (one outstanding at a time) and parallel tool calls would be denied.
+    assert.equal(events[1].tool_use_id, "call-1");
+    assert.equal(events[2].tool_use_id, "call-1");
+  });
+
+  it("overlapping calls carry distinct tool_use_ids and correlate per id", async () => {
+    const dir = workDir();
+    withMock(dir, "allow");
+    const harness = await loadExtension();
+    await startSession(harness);
+    // The pi-parallel shape: both PreToolUse land before either PostToolUse.
+    const callA = { ...bashCall, toolCallId: "call-a", input: { command: "ls" } };
+    const callB = { ...bashCall, toolCallId: "call-b", input: { command: "pwd" } };
+    const a = await handler(harness, "tool_call")(callA, harness.ctx);
+    const b = await handler(harness, "tool_call")(callB, harness.ctx);
+    assert.equal(a, undefined);
+    assert.equal(b, undefined);
+    const resultA = { ...bashResult, toolCallId: "call-a", input: { command: "ls" } };
+    const resultB = { ...bashResult, toolCallId: "call-b", input: { command: "pwd" } };
+    const ra = await handler(harness, "tool_result")(resultA, harness.ctx);
+    const rb = await handler(harness, "tool_result")(resultB, harness.ctx);
+    assert.equal(ra, undefined);
+    assert.equal(rb, undefined);
+    const events = recordedLines(dir).map((line) => JSON.parse(line));
+    const pres = events.filter((e) => e.hook_event_name === "PreToolUse");
+    const posts = events.filter((e) => e.hook_event_name === "PostToolUse");
+    assert.deepEqual(
+      pres.map((e) => e.tool_use_id),
+      ["call-a", "call-b"],
+    );
+    // Each Post echoes its own call's id and exact input bytes.
+    assert.equal(posts[0].tool_use_id, "call-a");
+    assert.equal(posts[1].tool_use_id, "call-b");
+    assert.equal(JSON.stringify(posts[0].tool_input), JSON.stringify({ command: "ls" }));
+    assert.equal(JSON.stringify(posts[1].tool_input), JSON.stringify({ command: "pwd" }));
   });
 
   it("denies with the runtime's reason on exit 2", async () => {
@@ -349,6 +408,55 @@ describe("gated session through the scripted mock", () => {
       JSON.stringify({ command: "ls", description: "list" }),
     );
     assert.equal(JSON.stringify(post.tool_input), JSON.stringify(pre.tool_input));
+  });
+
+  it("publishes ok status once the runtime answers", async () => {
+    const dir = workDir();
+    withMock(dir, "allow");
+    const harness = await loadExtension();
+    enableUiSpy(harness);
+    await startSession(harness);
+    await handler(harness, "tool_call")(bashCall, harness.ctx);
+    assert.deepEqual(harness.statuses[0], ["openappa", "openappa starting"]);
+    assert.deepEqual(harness.statuses.at(-1), ["openappa", "openappa ok · gated"]);
+  });
+
+  it("keeps ok status when a call is denied by policy (a denial is an answer)", async () => {
+    const dir = workDir();
+    withMock(dir, "deny-stderr");
+    const harness = await loadExtension();
+    enableUiSpy(harness);
+    await startSession(harness);
+    await handler(harness, "tool_call")(bashCall, harness.ctx);
+    assert.deepEqual(harness.statuses.at(-1), ["openappa", "openappa ok · gated"]);
+  });
+
+  it("publishes unreachable when the boot cannot reach the runtime", async () => {
+    const dir = workDir();
+    withMock(dir, "crash");
+    process.env.APPA_CONFIG = "/tmp/policy.toml"; // stay fail-closed
+    process.env.APPA_RUNTIME_URL = "http://127.0.0.1:8799";
+    const harness = await loadExtension();
+    enableUiSpy(harness);
+    await startSession(harness);
+    await handler(harness, "tool_call")(bashCall, harness.ctx);
+    // The boot settles unreachable; the crashing hook then reads as failing.
+    const texts = harness.statuses.map(([, text]) => text);
+    assert.ok(texts.includes("openappa unreachable · http://127.0.0.1:8799"));
+    assert.match(texts.at(-1) ?? "", /^openappa failing · hook exited /);
+  });
+
+  it("publishes hook timeout as unreachable", async () => {
+    const dir = workDir();
+    withMock(dir, "sleep");
+    process.env.APPA_CONFIG = "/tmp/policy.toml"; // no no-policy downgrade
+    process.env.APPA_RUNTIME_URL = "http://127.0.0.1:8799";
+    process.env.APPA_HOOK_TIMEOUT_MS = "150";
+    const harness = await loadExtension();
+    enableUiSpy(harness);
+    await startSession(harness);
+    await handler(harness, "tool_call")(bashCall, harness.ctx);
+    assert.deepEqual(harness.statuses.at(-1), ["openappa", "openappa unreachable · hook timeout"]);
   });
 
   it("reports turn end with --turn-end semantics (non-blocking)", async () => {

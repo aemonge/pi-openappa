@@ -63,13 +63,24 @@ describe("payload builders", () => {
 
   it("pre and post tool use echo the same input reference", () => {
     const input = { command: "ls", description: "list" };
-    const pre = preToolUsePayload(SESSION, "bash", input, "/w");
-    const post = postToolUsePayload(SESSION, "bash", input, { output: "x" }, "/w");
+    const pre = preToolUsePayload(SESSION, "bash", input, "/w", "call-9");
+    const post = postToolUsePayload(SESSION, "bash", input, { output: "x" }, "/w", "call-9");
     assert.equal(pre.tool_input, input);
     assert.equal(post.tool_input, input);
     assert.equal(JSON.stringify(pre.tool_input), JSON.stringify(post.tool_input));
     assert.equal(pre.tool_name, "Bash");
     assert.equal(post.tool_name, "Bash");
+  });
+
+  it("pre and post tool use carry the host-proposed tool_use_id", () => {
+    // Unidentified calls are serialized by the runtime (one outstanding at a
+    // time) — parallel tool calls require the id on every call. See
+    // docs/wire-notes.md "Call identification".
+    const input = { command: "ls" };
+    const pre = preToolUsePayload(SESSION, "bash", input, "/w", "call-42");
+    const post = postToolUsePayload(SESSION, "bash", input, { output: "x" }, "/w", "call-42");
+    assert.equal(pre.tool_use_id, "call-42");
+    assert.equal(post.tool_use_id, "call-42");
   });
 
   it("stop payload is minimal", () => {

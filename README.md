@@ -117,6 +117,19 @@ Policy resolution order: `APPA_CONFIG`, then the project marker's content,
 then `settings.json`'s `config`, then APPA's own default
 (`~/.config/appa/appa.toml`).
 
+### Status line
+
+Protected sessions publish a footer status under the `openappa` key
+(`ctx.ui.setStatus`): `openappa starting` while the runtime boots, then
+`openappa ok · gated` — or `openappa off · protection opted out`,
+`openappa unreachable · <url>` / `· hook timeout`, `openappa failing · <reason>`,
+or `openappa needs attention · no policy, session unprotected`. Status surfaces
+that render extension statuses (Pi's footer, pi-stardeck's shield chip) read
+this text; severity is word-matched downstream, so healthy texts deliberately
+avoid words like `fail`/`down`/`unreachable` — and silence renders as an
+error, which is why the extension always publishes. The full state table,
+refresh points, and the renderer contract: [docs/status-line.md](docs/status-line.md).
+
 ## Starter policy: `/appa init`
 
 `templates/appa.toml` declares every known Pi tool (deny-undeclared is the

@@ -21,6 +21,13 @@ export interface AppaHookPayload {
   source?: "startup" | "resume";
   prompt?: string;
   tool_name?: string;
+  /**
+   * Host-proposed call id (PreToolUse/PostToolUse). Calls that lack it are
+   * "unidentified" to the runtime: only one may be outstanding at a time,
+   * and while one is, every later PreToolUse is denied — verified 2026-10-19,
+   * see docs/wire-notes.md "Call identification".
+   */
+  tool_use_id?: string;
   tool_input?: Record<string, unknown>;
   tool_response?: Record<string, unknown>;
   cwd?: string;
@@ -84,20 +91,25 @@ export function promptPayload(sessionId: string, prompt: string, cwd: string): A
 }
 
 /**
- * Build the PreToolUse payload. The returned payload's `tool_input` reference
- * must be echoed byte-identically at PostToolUse time: the runtime digests it
- * canonically and withholds results that mismatch (byte_mismatch). Callers
- * must keep the exact `input` object they passed here until the call settles.
+ * Build the PreToolUse payload. `toolUseId` is the host-proposed call id:
+ * without it the runtime treats the call as unidentified and denies any
+ * overlapping call (parallel tool calls break — verified 2026-10-19). The
+ * returned payload's `tool_input` reference must be echoed byte-identically
+ * at PostToolUse time: the runtime digests it canonically and withholds
+ * results that mismatch (byte_mismatch). Callers must keep the exact
+ * `input` object they passed here until the call settles.
  */
 export function preToolUsePayload(
   sessionId: string,
   piToolName: string,
   input: Record<string, unknown>,
   cwd: string,
+  toolUseId: string,
 ): AppaHookPayload {
   return {
     session_id: sessionId,
     hook_event_name: "PreToolUse",
+    tool_use_id: toolUseId,
     tool_name: mapToolName(piToolName),
     tool_input: input,
     cwd,
@@ -106,7 +118,8 @@ export function preToolUsePayload(
 
 /**
  * Build the PostToolUse payload. `input` MUST be the exact object previously
- * passed to preToolUsePayload for this call (see its doc comment).
+ * passed to preToolUsePayload for this call (see its doc comment); pass the
+ * same `toolUseId` so the runtime can correlate overlapping calls.
  */
 export function postToolUsePayload(
   sessionId: string,
@@ -114,10 +127,12 @@ export function postToolUsePayload(
   input: Record<string, unknown>,
   response: Record<string, unknown>,
   cwd: string,
+  toolUseId: string,
 ): AppaHookPayload {
   return {
     session_id: sessionId,
     hook_event_name: "PostToolUse",
+    tool_use_id: toolUseId,
     tool_name: mapToolName(piToolName),
     tool_input: input,
     tool_response: response,

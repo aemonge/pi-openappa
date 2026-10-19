@@ -36,7 +36,7 @@ import {
   settingsPath,
 } from "../src/gate.ts";
 import type { InvokeOptions } from "../src/hook-client.ts";
-import { invokeAppaHook, resolveHookBin } from "../src/hook-client.ts";
+import { type HookOutcome, invokeAppaHook, resolveHookBin } from "../src/hook-client.ts";
 import { type InstallOutcome, installAppa } from "../src/installer.ts";
 
 interface TextPart {
@@ -86,6 +86,41 @@ export default function (pi: ExtensionAPI): void {
   const gateNow = (): GateState | undefined =>
     gate?.gated === true && !unprotected ? gate : undefined;
 
+  /**
+   * Footer/deck status. Companions like pi-stardeck render the text we
+   * publish via ctx.ui.setStatus — and render ABSENCE as an error (red), so
+   * a session must publish from the start and keep it current. Severity is
+   * word-matched downstream: healthy texts must avoid the fragments
+   * error / fail / down / unreachable / unhealthy ("countdown" and
+   * "downloading" collide too); degraded texts carry one on purpose.
+   */
+  const STATUS_KEY = "openappa";
+  let lastStatus = "";
+  interface StatusCtx {
+    hasUI?: boolean;
+    ui?: { setStatus?: (key: string, text: string | undefined) => void };
+  }
+  const publishStatus = (ctx: StatusCtx, text: string): void => {
+    if (!ctx.hasUI || text === lastStatus) return;
+    lastStatus = text;
+    ctx.ui?.setStatus?.(STATUS_KEY, text);
+  };
+
+  /** A policy denial is an answer; only transport-level failures degrade. */
+  const statusFromOutcome = (outcome: HookOutcome, runtimeUrl: string): string => {
+    if (outcome.binaryMissing) return "openappa failing · appa binary missing";
+    if (outcome.timedOut) return "openappa unreachable · hook timeout";
+    if (outcome.exitCode === 0) return "openappa ok · gated";
+    const answered =
+      outcome.stderr.trimStart().startsWith("OpenAPPA hook blocked:") ||
+      outcome.stdout.trimStart().startsWith("{");
+    if (answered) return "openappa ok · gated";
+    if (outcome.stderr.includes(runtimeUrl) || /could not be started/i.test(outcome.stderr)) {
+      return `openappa unreachable · ${runtimeUrl}`;
+    }
+    return `openappa failing · hook exited ${outcome.exitCode}`;
+  };
+
   const hookOptions = (state: GateState, extra: InvokeOptions = {}): InvokeOptions => {
     const options: InvokeOptions = { ...extra };
     if (state.hookTimeoutMs !== undefined) options.timeoutMs = state.hookTimeoutMs;
@@ -95,7 +130,11 @@ export default function (pi: ExtensionAPI): void {
   pi.on("session_start", async (event, ctx) => {
     gate = captureGate(process.env, ctx.cwd);
     sessionId = ctx.sessionManager.getSessionId();
-    if (!gate.gated) return;
+    if (!gate.gated) {
+      publishStatus(ctx, "openappa off · protection opted out");
+      return;
+    }
+    publishStatus(ctx, "openappa starting");
     unprotected = false;
     const state = gate;
     const options: InvokeOptions = { ensureRuntime: true };
@@ -154,6 +193,7 @@ export default function (pi: ExtensionAPI): void {
           !(await checkHealth(state.runtimeUrl)).ok
         ) {
           unprotected = true;
+          publishStatus(ctx, "openappa needs attention · no policy, session unprotected");
           if (!warnedAlready) {
             notify(
               "OpenAPPA is on by default, but no policy exists (run /appa init, " +
@@ -165,6 +205,7 @@ export default function (pi: ExtensionAPI): void {
           }
           return;
         }
+        publishStatus(ctx, `openappa unreachable · ${state.runtimeUrl}`);
         if (ctx.hasUI && !warnedAlready) {
           const remedy =
             state.config === undefined
@@ -177,7 +218,9 @@ export default function (pi: ExtensionAPI): void {
             "warning",
           );
         }
+        return;
       }
+      publishStatus(ctx, "openappa ok · gated");
     });
   });
 
@@ -185,16 +228,24 @@ export default function (pi: ExtensionAPI): void {
     const state = gateNow();
     if (state === undefined) return;
     // The prompt event establishes the turn boundary; it does not gate.
-    await enqueue(() =>
+    const outcome = await enqueue(() =>
       invokeAppaHook(promptPayload(sessionId, event.prompt, ctx.cwd), hookOptions(state)),
     );
+    publishStatus(ctx, statusFromOutcome(outcome, state.runtimeUrl));
   });
 
   pi.on("tool_call", async (event, ctx) => {
     const state = gateNow();
     if (state === undefined) return;
-    const payload = preToolUsePayload(sessionId, event.toolName, event.input, ctx.cwd);
+    const payload = preToolUsePayload(
+      sessionId,
+      event.toolName,
+      event.input,
+      ctx.cwd,
+      event.toolCallId,
+    );
     const outcome = await enqueue(() => invokeAppaHook(payload, hookOptions(state)));
+    publishStatus(ctx, statusFromOutcome(outcome, state.runtimeUrl));
     const decision = parseCallDecision(outcome.exitCode, outcome.stdout, outcome.stderr);
     if (decision.type === "deny") {
       return { block: true, reason: `appa: ${decision.reason}` };
@@ -219,8 +270,10 @@ export default function (pi: ExtensionAPI): void {
       sentInput ?? event.input,
       response,
       ctx.cwd,
+      event.toolCallId,
     );
     const outcome = await enqueue(() => invokeAppaHook(payload, hookOptions(state)));
+    publishStatus(ctx, statusFromOutcome(outcome, state.runtimeUrl));
     const decision = parseResultDecision(outcome.exitCode, outcome.stdout, outcome.stderr);
     if (decision.type === "pass") {
       return undefined;
@@ -231,13 +284,14 @@ export default function (pi: ExtensionAPI): void {
     };
   });
 
-  pi.on("turn_end", async () => {
+  pi.on("turn_end", async (_event, ctx) => {
     const state = gateNow();
     if (state === undefined) return;
     // Turn completion is reported, never gated (matching --turn-end).
-    await enqueue(() =>
+    const outcome = await enqueue(() =>
       invokeAppaHook(stopPayload(sessionId), hookOptions(state, { turnEnd: true })),
     );
+    publishStatus(ctx, statusFromOutcome(outcome, state.runtimeUrl));
   });
 
   pi.on("session_shutdown", () => {
@@ -332,6 +386,16 @@ export default function (pi: ExtensionAPI): void {
       lines.push(`Health: ${health.ok ? "ok" : `unreachable (${health.detail})`}`);
       if (state.gated && !health.ok) {
         lines.push("While the runtime is down, gated tool calls are blocked (fail-closed).");
+      }
+      if (!state.gated) {
+        publishStatus(ctx, "openappa off · protection opted out");
+      } else if (unprotected) {
+        publishStatus(ctx, "openappa needs attention · no policy, session unprotected");
+      } else {
+        publishStatus(
+          ctx,
+          health.ok ? "openappa ok · gated" : `openappa unreachable · ${state.runtimeUrl}`,
+        );
       }
       const message = lines.join("\n");
       if (ctx.hasUI) {

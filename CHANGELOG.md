@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-10-19
+
+### Added
+
+- The extension now publishes a footer/deck status under the `openappa` key
+  (`ctx.ui.setStatus`): `starting` from session start, then `ok · gated`,
+  `off · protection opted out`, `unreachable · <url>` / `· hook timeout`,
+  `failing · <reason>`, or `needs attention · no policy, session unprotected`,
+  refreshed from every hook outcome and `/appa status`. Status renderers
+  (pi-stardeck's shield chip) treat silence as an error, so a session that
+  never published showed a permanently red chip even while healthy. A policy
+  denial is an answer — only transport-level failures degrade the status.
+  Renderer contract and state table documented in docs/status-line.md.
+
+### Fixed
+
+- Parallel tool calls are no longer denied by the runtime: every PreToolUse
+  and PostToolUse now carries the host-proposed `tool_use_id`. Calls without
+  it are "unidentified" to the APPA runtime (only one outstanding at a
+  time), so the second call of any parallel pair was denied with
+  `a call without a host id is already outstanding…` — and an orphaned
+  unidentified call could block every session on the runtime. Wire contract
+  re-verified against appa 0.31.1 with concurrent probes; see the new
+  "Call identification" section in docs/wire-notes.md.
+
 ## [0.3.3] — 2026-10-13
 
 ### Fixed
