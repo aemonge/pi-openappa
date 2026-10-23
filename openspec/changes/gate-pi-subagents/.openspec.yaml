@@ -1,0 +1,11 @@
+schema: spec
+created: 2026-10-23
+goal: "Close the four subagent-launch gaps: claim pi-subagents' two enforcement
+  seams (registerRequiredChildExtensions with requireForAllRunners,
+  registerSubagentCapabilityCeiling) so launches from protected sessions fail
+  closed when unguardable."
+
+status: approved
+created_by: assistant
+
+approved_at: 2026-10-23T10:24:56Z
